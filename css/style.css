@@ -1,0 +1,111 @@
+/* Basic styles for The Wyrnlands */
+body {
+    margin: 0;
+    padding: 0;
+    background-color: #000;
+    color: #fff;
+    font-family: sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+}
+
+#game-container {
+    border: 1px solid #333; /* Optional border around the game */
+}
+
+/* --- UI Overlay --- */
+#ui-overlay {
+    position: absolute; /* Position over the game canvas */
+    top: 10px;
+    left: 10px;
+    background-color: rgba(0, 0, 0, 0.6); /* Semi-transparent background */
+    padding: 10px;
+    border-radius: 5px;
+    color: #eee;
+    font-size: 14px;
+    z-index: 10; /* Ensure it's above the canvas */
+    min-width: 200px;
+}
+
+.status-bar-container {
+    margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.status-bar-container span {
+    width: 50px; /* Fixed width for labels */
+    display: inline-block;
+}
+
+.status-bar {
+    display: inline-block;
+    width: 100px; /* Fixed width for the bar */
+    height: 12px;
+    background-color: #555; /* Background of the empty part */
+    border: 1px solid #888;
+    border-radius: 3px;
+    overflow: hidden; /* Hide overflow of the fill */
+}
+
+.status-bar-fill {
+    height: 100%;
+    background-color: #4CAF50; /* Green for default fill */
+    width: 100%; /* Start full */
+    transition: width 0.2s ease-in-out; /* Smooth transition */
+}
+
+/* Specific bar colors (optional) */
+#hunger-bar-fill { background-color: #FFA500; } /* Orange */
+#thirst-bar-fill { background-color: #1E90FF; } /* DodgerBlue */
+
+#time-display-container,
+#selected-tile-info-container {
+    margin-top: 8px;
+}
+
+/* Add styles for other UI elements (modals, HUD) here later */
+
+/* --- Interaction Menu --- */
+#interaction-menu {
+    display: none; /* Hidden by default */
+    position: absolute; /* Position relative to the overlay or potentially the game container */
+    background-color: rgba(40, 40, 40, 0.9); /* Darker background */
+    border: 1px solid #aaa;
+    border-radius: 4px;
+    padding: 8px;
+    min-width: 150px;
+    z-index: 20; /* Ensure it's above the main overlay */
+    /* Placeholder positioning - uiManager should set left/top */
+    left: 50px;
+    top: 150px;
+}
+
+#interaction-menu button {
+    display: block; /* Each button on its own line */
+    width: 100%;
+    padding: 5px 8px;
+    margin-bottom: 4px;
+    background-color: #666;
+    color: #eee;
+    border: 1px solid #888;
+    border-radius: 3px;
+    text-align: left;
+    cursor: pointer;
+}
+
+#interaction-menu button:hover {
+    background-color: #888;
+}
+
+#interaction-menu button:last-child {
+    margin-top: 8px; /* Space before the close button */
+    margin-bottom: 0;
+    background-color: #933; /* Different color for close */
+}
+
+#interaction-menu button:last-child:hover {
+    background-color: #c55;
+}

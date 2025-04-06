@@ -1,0 +1,6 @@
+# This is a placeholder file to ensure the lib directory is created.
+# Please add the required libraries here:
+# - phaser.min.js
+# - sql-wasm.js
+# - sql-wasm.wasm
+# - FileSaver.min.js

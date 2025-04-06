@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Wyrnlands</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        body { margin: 0; background-color: #000; }
+        canvas { display: block; margin: auto; } /* Center canvas */
+    </style>
+</head>
+<body>
+    <div id="ui-overlay">
+        <div class="status-bar-container">
+            <span>Hunger:</span>
+            <div class="status-bar" id="hunger-bar-outer">
+                <div class="status-bar-fill" id="hunger-bar-fill"></div>
+            </div>
+        </div>
+        <div class="status-bar-container">
+            <span>Thirst:</span>
+            <div class="status-bar" id="thirst-bar-outer">
+                <div class="status-bar-fill" id="thirst-bar-fill"></div>
+            </div>
+        </div>
+        <div id="time-display-container">
+            <span>Time:</span> <span id="time-display">Day 1, 07:00:00</span>
+        </div>
+        <div id="selected-tile-info-container">
+            <span>Selected:</span> <span id="selected-tile-info">None</span>
+        </div>
+        <!-- Add other UI elements here -->
+        <div id="interaction-menu" class="interaction-menu-container">
+            <!-- Buttons will be added here dynamically by uiManager -->
+        </div>
+    </div>
+
+    <div id="game-container"></div>
+
+    <!-- External Libraries -->
+    <script src="lib/phaser.min.js"></script>
+    <script src="lib/sql-wasm.js"></script>
+    <script src="lib/FileSaver.min.js"></script>
+
+    <!-- Main Game Logic -->
+    <script type="module" src="main.js"></script>
+</body>
+</html>

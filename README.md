@@ -16,5 +16,9 @@ The Wyrnlands is a modular, text-driven simulation RPG built entirely in-browser
 
 Explore the living world of The Wyrnlands — where simulation meets strategy in a richly detailed medieval society.
 
-Developer Note: Game is under development, expect bugs and missing features.
-Discord: https://discord.gg/SGyMxZZJ
+
+--
+Creative Commons Attribution-NonCommercial 4.0 International Public License (CC BY-NC 4.0)
+--
+
+Developer Note: Game is under heavy development, expect bugs and missing features. This is a passion project and will likely be in development for a long time. Discord: https://discord.gg/SGyMxZZJ

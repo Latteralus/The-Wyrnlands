@@ -36,11 +36,11 @@ Create a modular, browser-based medieval simulation RPG titled **The Wyrnlands**
 - For each engine module created:
   - Implement logic based on `TechnicalDocument.md`
   - Write corresponding **unit test** immediately
-  - Log test result in `testtracker.md`
+  - Report test pass and units covered in `testtracker.md`
 
 ---
 
-## 🧩 Core Modules (Examples)
+## 🧩 Core Modules (Examples) (Create Utility Files where appropriate)
 - `mapEngine.js`: Handle tiles, coordinates, zoning, travel
 - `player.js`: Hunger, thirst, skills, housing ownership
 - `economyEngine.js`: Wages, prices, contracts, taxes
@@ -62,7 +62,7 @@ The game must:
 - Run fully in-browser (no server)
 - Save/load simulation state from `.sqlite` file
 - Feature tile-based land use and player/NPC simulation
-- Simulate hunger, thirst, work, skill progression, construction, and economy
+- Simulate hunger, thirst, fatigue, work, skill progression, construction, and economy
 
 ---
 

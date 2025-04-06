@@ -7,24 +7,24 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 
 ---
 
-## ✅ MVP Step-by-Step Checklist
-Each step below outlines required functionality, associated files, and mandates that a **unit test be created immediately** after file implementation. Each test must be logged in `testtracker.md`.
+##  MVP Step-by-Step Checklist
+Each step below outlines required functionality, associated files, and mandates that a **unit test be created immediately** after file implementation. Each test must be logged in `testtracker.md`. Once a test is complete and the file is verified as passing, update MVPChecklist.md to ensure the step/file is marked as completed. If necessary, update Definitions.md as well as Structure.md
 
 ---
 
 ### 🧱 Phase 1: Project Setup
-1. ✅ Initialize Phaser + SQLite Project
+1. [x] Initialize Phaser + SQLite Project
    - Set up `index.html`, `main.js`, `phaserGame.js`
    - Add `sql.js`, `FileSaver.js`
    - Test: Basic Phaser canvas renders
    - Log test in `testtracker.md`
 
-2. ✅ Create `db/initDatabase.js`
+2. [x] Create `src/data/database.js` (was `db/initDatabase.js`)
    - Schema: Player, Buildings, MapTiles, NPCs, Households, Inventory
    - Unit test: Confirm tables created successfully
    - Log test
 
-3. ✅ Create save/load system (`saveManager.js`)
+3. [x] Create save/load system (`src/managers/saveLoadManager.js`)
    - Export `.sqlite` file
    - Load file with FileReader
    - Unit test: Save file integrity, reload checks
@@ -33,23 +33,23 @@ Each step below outlines required functionality, associated files, and mandates 
 ---
 
 ### 🌄 Phase 2: Core World & Player
-4. ✅ Create tile/grid map system (`mapEngine.js`)
+4. [x] Create tile/grid map system (`src/engines/mapEngine.js`)
    - Load grid into Phaser
    - Mark tiles as walkable or buildable
    - Test: Walkable tiles render
    - Log test
 
-5. ✅ Create `player.js` class
+5. [x] Create `playerEngine.js` (handles player state)
    - Attributes: Name, hunger, thirst, skill levels
    - Unit test: Constructor integrity, getter/setter tests
    - Log test
 
-6. ✅ Create movement handler (`movementEngine.js`)
+6. [x] Create movement handler (`src/engines/movementEngine.js`)
    - Click-to-move logic, tile validation
    - Unit test: Tile change updates player position
    - Log test
 
-7. ✅ Implement hunger/thirst system (`survivalEngine.js`)
+7. [x] Implement hunger/thirst system (`src/engines/survivalEngine.js`)
    - Daily tick reduces values, death if zero
    - Unit test: Ticking changes values correctly
    - Log test
@@ -57,18 +57,18 @@ Each step below outlines required functionality, associated files, and mandates 
 ---
 
 ### 🏠 Phase 3: Housing & Inventory
-8. ✅ Implement `buildingEngine.js`
+8. [x] Implement `buildingEngine.js` (`src/engines/buildingEngine.js`)
    - Add buildings to tiles with ID and sq. ft.
    - Store owner ID, rooms, taxes
    - Unit test: Add/remove buildings correctly
    - Log test
 
-9. ✅ Create inventory system (`inventoryUtils.js`)
+9. [X] Create inventory system (`inventoryUtils.js`)
    - Add/remove items to household or player
    - Unit test: Track item count across scopes
    - Log test
 
-10. ✅ Create tax handler (`taxEngine.js`)
+10. [X] Create tax handler (`taxEngine.js`)
    - Apply taxes per tile monthly
    - Repossess if unpaid
    - Unit test: Tax threshold triggers repossession
@@ -77,19 +77,19 @@ Each step below outlines required functionality, associated files, and mandates 
 ---
 
 ### 🧑‍🌾 Phase 4: Skills & Work
-11. ✅ Create `skillEngine.js`
+11. [X] Create `skillEngine.js`
    - Track and level skills (e.g., Carpentry, Farming)
    - Calculate wage output ratio
    - Unit test: Level changes production correctly
    - Log test
 
-12. ✅ Create job engine (`jobEngine.js`)
+12. [X] Create job engine (`jobEngine.js`)
    - Assign job to NPC or player
    - Pay daily wages, route output to business or player
    - Unit test: Wage + output logic integrity
    - Log test
 
-13. ✅ Create NPC simulation engine (`npcEngine.js`)
+13. [X] Create NPC simulation engine (`npcEngine.js`)
    - NPCs follow schedules: Work → Eat → Sleep
    - Unit test: NPC behavior consistent with state
    - Log test
@@ -97,13 +97,13 @@ Each step below outlines required functionality, associated files, and mandates 
 ---
 
 ### 🔨 Phase 5: Construction & Labor
-14. ✅ Add construction system (`constructionEngine.js`)
+14. [X] Add construction system (`constructionEngine.js`)
    - Require material + labor inputs over time
    - Multi-tile building support
    - Unit test: Building progresses only with full inputs
    - Log test
 
-15. ✅ Add labor tracking (`laborUtils.js`)
+15. [X] Add labor tracking (`laborUtils.js`)
    - Types: General, Masonry, Carpentry
    - Test: Labor used & removed after build step
    - Log test
@@ -111,20 +111,20 @@ Each step below outlines required functionality, associated files, and mandates 
 ---
 
 ### 🧪 Finalization
-16. ✅ Create `timeEngine.js`
+16. [X] Create `timeEngine.js`
    - Tick every X ms, update date/time
    - Sleep = fast-forward
    - Unit test: Ticking updates time correctly
    - Log test
 
-17. ✅ Create basic UI overlay (`uiManager.js`)
+17. [X] Create basic UI overlay (`uiManager.js`)
    - Display hunger, thirst, selected tile info
    - Unit test: Bar updates with stat change
    - Log test
 
-18. ✅ Final Integration Test
-   - Simulate 7 in-game days
-   - Ensure no crash, simulate: work, eat, sleep
+18. [/] Final Integration Test (Initial Structure Check)
+   - Simulate 7 in-game days (Time progression only for now)
+   - Ensure no crash, simulate: work, eat, sleep (Work/Eat/Sleep simulation pending engine implementation)
    - Log test results in `testtracker.md`
 
 ---

@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>The Wyrnlands - Unit Tests</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.4; }
+        .log { margin-bottom: 5px; padding: 2px 5px; border-radius: 3px; }
+        .log-info { background-color: #e0e0e0; }
+        .log-pass { background-color: #d4edda; color: #155724; }
+        .log-fail { background-color: #f8d7da; color: #721c24; font-weight: bold; }
+        .log-warn { background-color: #fff3cd; color: #856404; }
+        .summary { margin-top: 20px; padding: 10px; border: 1px solid #ccc; }
+    </style>
+</head>
+<body>
+    <h1>The Wyrnlands - Unit Test Runner</h1>
+    <p>Check the browser's developer console for detailed test output.</p>
+    <div id="test-output">
+        <h2>Console Output Mirror:</h2>
+        <!-- Test logs will be mirrored here -->
+    </div>
+
+    <!-- Required Libraries -->
+    <script src="../lib/sql-wasm.js"></script>
+
+    <!-- Test Script (using type="module") -->
+    <script type="module">
+        // Import and run tests
+        import { runDatabaseTests } from './unit/data/database.test.js';
+
+        // Simple console mirroring to HTML
+        const outputDiv = document.getElementById('test-output');
+        const originalConsoleLog = console.log;
+        const originalConsoleError = console.error;
+        const originalConsoleWarn = console.warn;
+
+        function logToPage(message, level = 'info') {
+            const div = document.createElement('div');
+            div.classList.add('log');
+            if (level === 'pass' || message.startsWith('PASS:')) {
+                 div.classList.add('log-pass');
+            } else if (level === 'fail' || message.startsWith('FAIL:')) {
+                 div.classList.add('log-fail');
+            } else if (level === 'warn' || message.startsWith('WARN:')) {
+                 div.classList.add('log-warn');
+            } else {
+                 div.classList.add('log-info');
+            }
+            div.textContent = message;
+            outputDiv.appendChild(div);
+        }
+
+        console.log = function(...args) {
+            originalConsoleLog.apply(console, args);
+            logToPage(args.join(' '));
+        };
+        console.error = function(...args) {
+            originalConsoleError.apply(console, args);
+            logToPage(args.join(' '), 'fail');
+        };
+         console.warn = function(...args) {
+            originalConsoleWarn.apply(console, args);
+            logToPage(args.join(' '), 'warn');
+        };
+
+
+        // Run the tests after the page loads
+        window.addEventListener('load', async () => {
+            console.log("Test runner loaded. Starting tests...");
+            try {
+                const success = await runDatabaseTests(); // Assumes test function returns true on success
+                if (success) {
+                    console.log("All Database tests passed!");
+                } else {
+                    console.error("Some Database tests failed.");
+                }
+            } catch (err) {
+                console.error("Error running test suite:", err);
+            }
+            console.log("Test execution finished.");
+        });
+    </script>
+</body>
+</html>

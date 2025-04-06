@@ -15,19 +15,20 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 - **Database**: SQLite via sql.js (WASM compiled)
 - **Save/Load**: FileSaver.js + FileReader API
 - **Offline Play**: Fully functional in-browser, no server
+- **Testing**: Vitest/jsdom to Test
 
 ---
 
 ## 📊 Game Systems
 
 ### 1. Time System
-- Ratio: 1 real second = 30 game seconds
+- Ratio: 1 real second = 60 game seconds
 - Options: 1x / 2x / 4x speed
-- Day/Night with sleep overlay
+- Day/Night with sleep overlay (force sleep at 2am)
 - Sleep always ends at 7:00 AM in-game
 
 ### 2. Player HUD
-- Bars: Hunger, Thirst, Health, Armor
+- Bars: Hunger, Thirst, Fatigue, Health, Armor
 - Tabs: Character Sheet, Equipment, Skills
 
 ### 3. Map & Travel
@@ -69,12 +70,14 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 - Player can:
   - Work for wages (business gets output)
   - Gather independently (player keeps materials)
+  - Level up appropriate skills for faster production (higher skill = faster actions)
 - Wage tied to skill level
 - Output scales faster than wage
 - Businesses (Owned by NPCs or Players):
   - Have their own bank account
   - Pay wages, taxes, buy supplies
   - Hire managers or staff
+  - Must have their own building (to interact with)
 - Supply chains:
   - Farm → Mill → Bakery (example)
   - Transport required for all goods (Nothing in this game magically appears or disappears, everything has to be moved by someone (npc or player). The life cycle of products begins with natural resources and ends with items that have hit condition of 0)
@@ -129,7 +132,7 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 - Player movement & click actions
 - SQLite schema
 - Save/load system
-- Hunger, thirst, and tool degradation
+- Hunger, thirst, fatigue, and tool degradation
 - Working construction simulation with visible stages
 
 ### Phase 2
