@@ -1,6 +1,7 @@
 // src/utils/economyUtils.js
 // Utility functions for handling economic concepts like currency, pricing, wages, taxes, inflation, etc.
 
+import { run, get } from '../data/database.js'; // Import DB functions
 // --- Currency System ---
 // All currency amounts are stored as integers representing the smallest unit (e.g., Copper Pieces).
 const COPPER_PER_SILVER = 100;
@@ -88,29 +89,112 @@ function getEntityType(entityId) {
     return 'Unknown';
 }
 
-// NOTE: The following functions (getEntityFunds, setEntityFunds) are assumed to be
-// implemented in and imported from other modules (e.g., a hypothetical fundManager or entityManager).
-// The processTransaction function below relies on their availability in its scope.
-// Example hypothetical import:
-// import { getEntityFunds, setEntityFunds } from '@/managers/fundManager.js';
+// --- Fund Management Helpers ---
+// These interact directly with the database for now.
+// TODO: Consider caching funds in memory for performance if needed.
 
+/**
+ * Retrieves the current funds for a given entity (Household, Business, etc.).
+ * Assumes funds are stored in a 'funds' column in the entity's table.
+ * @param {string} entityId - The ID of the entity (e.g., household_id, business_id).
+ * @param {string} entityType - 'Household', 'Business', etc. (determines table name).
+ * @returns {Promise<number|null>} The current funds in copper, or null if not found/error.
+ */
+async function getEntityFunds(entityId, entityType) {
+    // Determine table and column names based on type
+    let tableName;
+    let idColumn;
+    switch (entityType) {
+        case 'Household':
+            tableName = 'Households';
+            idColumn = 'household_id';
+            break;
+        // TODO: Add cases for 'Business', 'Guild' etc. if they store funds directly
+        // case 'Business':
+        //     tableName = 'Businesses';
+        //     idColumn = 'business_id';
+        //     break;
+        default:
+            console.error(`getEntityFunds: Unsupported entity type "${entityType}".`);
+            return null;
+    }
+
+    try {
+        const row = await get(`SELECT funds FROM ${tableName} WHERE ${idColumn} = ?`, [entityId]);
+        if (row) {
+            return row.funds; // Assuming 'funds' column stores copper value
+        } else {
+            console.warn(`getEntityFunds: Entity ${entityType} ${entityId} not found.`);
+            return null;
+        }
+    } catch (error) {
+        console.error(`Error getting funds for ${entityType} ${entityId}:`, error);
+        return null;
+    }
+}
+
+/**
+ * Sets the funds for a given entity.
+ * @param {string} entityId - The ID of the entity.
+ * @param {string} entityType - 'Household', 'Business', etc.
+ * @param {number} newAmount - The new fund amount in copper (must be non-negative integer).
+ * @returns {Promise<boolean>} True if successful, false otherwise.
+ */
+async function setEntityFunds(entityId, entityType, newAmount) {
+    if (typeof newAmount !== 'number' || !Number.isInteger(newAmount) || newAmount < 0) {
+        console.error(`setEntityFunds: Invalid new amount ${newAmount}. Must be a non-negative integer.`);
+        return false;
+    }
+
+    let tableName;
+    let idColumn;
+     switch (entityType) {
+        case 'Household':
+            tableName = 'Households';
+            idColumn = 'household_id';
+            break;
+        // TODO: Add cases for 'Business', 'Guild' etc.
+        default:
+            console.error(`setEntityFunds: Unsupported entity type "${entityType}".`);
+            return false;
+    }
+
+    try {
+        const result = await run(
+            `UPDATE ${tableName} SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE ${idColumn} = ?`,
+            [newAmount, entityId]
+        );
+        if (result.changes > 0) {
+            // console.log(`Funds updated for ${entityType} ${entityId} to ${newAmount} C.`); // Less noisy log
+            return true;
+        } else {
+            console.warn(`setEntityFunds: Entity ${entityType} ${entityId} not found or funds not changed.`);
+            return false; // Return false if no row was updated
+        }
+    } catch (error) {
+        console.error(`Error setting funds for ${entityType} ${entityId}:`, error);
+        return false;
+    }
+}
+
+// --- Transaction Processing ---
+// (processTransaction function remains here, now using the above helpers)
 
 /**
  * Processes a transaction between two entities.
  * Deducts funds from the payer and adds them to the payee.
  * Relies on assumed helper functions getEntityType, getEntityFunds, setEntityFunds.
  * @param {string} payerId - The ID of the entity paying.
- * @param {string} payeeId - The ID of the entity receiving payment.
+ * @param {number} payerId - The numeric ID of the entity paying.
+ * @param {string} payerType - The type of the payer ('Household', 'Business', etc.).
+ * @param {number} payeeId - The numeric ID of the entity receiving payment.
+ * @param {string} payeeType - The type of the payee ('Household', 'Business', etc.).
  * @param {number} amount - The amount to transfer (in copper, must be positive integer).
- * @param {function} getEntityFundsFunc - Async function to retrieve funds for an entity ID and type.
- * @param {function} setEntityFundsFunc - Async function to set funds for an entity ID and type.
  * @param {string} [reason="Transaction"] - A description for logging purposes.
  * @returns {Promise<boolean>} True if the transaction was successful, false otherwise.
  */
-async function processTransaction(payerId, payeeId, amount, getEntityFundsFunc, setEntityFundsFunc, reason = "Transaction") {
-    // Use the provided functions instead of importing
-    const getEntityFunds = getEntityFundsFunc;
-    const setEntityFunds = setEntityFundsFunc;
+async function processTransaction(payerId, payerType, payeeId, payeeType, amount, reason = "Transaction") {
+    // Uses getEntityFunds and setEntityFunds defined in this module
 
     console.log(`Processing transaction: ${payerId} pays ${payeeId} ${amount} C for ${reason}`);
 
@@ -118,13 +202,19 @@ async function processTransaction(payerId, payeeId, amount, getEntityFundsFunc, 
         console.error(`Transaction failed: Invalid amount ${amount}. Must be a positive integer.`);
         return false; // Fail on invalid amount
     }
-    if (!payerId || !payeeId || payerId === payeeId) {
-         console.error(`Transaction failed: Invalid payer ('${payerId}') or payee ('${payeeId}').`);
+    // IDs should be numbers now, types are passed in. Check for null/undefined IDs.
+    if (payerId == null || payeeId == null || (payerId === payeeId && payerType === payeeType)) {
+         console.error(`Transaction failed: Invalid payer (ID: ${payerId}, Type: ${payerType}) or payee (ID: ${payeeId}, Type: ${payeeType}).`);
          return false;
     }
 
-    const payerType = getEntityType(payerId);
-    const payeeType = getEntityType(payeeId);
+    // Validate types passed in
+    const validTypes = ['Household', 'Business', 'Guild']; // Extend as needed
+    if (!validTypes.includes(payerType) || !validTypes.includes(payeeType)) {
+        console.error(`Transaction failed: Invalid entity type provided. Payer: ${payerType}, Payee: ${payeeType}.`);
+        return false;
+    }
+    // Removed internal getEntityType calls
 
     if (payerType === 'Unknown' || payeeType === 'Unknown') {
         console.error(`Transaction failed: Unknown entity type for payer ('${payerType}') or payee ('${payeeType}').`);
@@ -197,6 +287,7 @@ export {
     calculateWage,
     processTransaction,
     calculateTransactionTax,
-    // Export assumed helpers only if they were implemented here, otherwise don't
+    getEntityFunds, // Export new helpers
+    setEntityFunds,
     getEntityType // Exporting this as it's implemented here
 };

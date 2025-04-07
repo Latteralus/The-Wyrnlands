@@ -9,6 +9,7 @@ const UI_ELEMENTS = {
     hungerBar: 'hunger-bar-fill', // ID of the fill element inside the hunger bar
     thirstBar: 'thirst-bar-fill', // ID of the fill element inside the thirst bar
     timeDisplay: 'time-display',
+    playerTitleDisplay: 'player-title-display', // Added for player title
     selectedTileInfo: 'selected-tile-info',
     // Add other UI element IDs as needed
     interactionMenu: 'interaction-menu', // Placeholder ID for the interaction menu container
@@ -79,14 +80,29 @@ function updateSelectedTileInfo(tileData) {
     } else {
         console.warn(`UI Manager: Element with ID "${UI_ELEMENTS.selectedTileInfo}" not found for tile info display.`);
     }
-}
-
-// Add other UI update functions as needed (e.g., showModal, updateInventoryDisplay)
-
-export {
+ }
+ 
+ /**
+  * Updates the displayed player title.
+  *
+  * @param {string} titleName - The name of the player's current title (e.g., "Freeman", "Commoner").
+  */
+ function updatePlayerTitleDisplay(titleName) {
+     const element = document.getElementById(UI_ELEMENTS.playerTitleDisplay);
+     if (element) {
+         element.textContent = titleName || 'Unknown Title'; // Display the title name
+     } else {
+         console.warn(`UI Manager: Element with ID "${UI_ELEMENTS.playerTitleDisplay}" not found for player title display.`);
+     }
+ }
+ 
+ // Add other UI update functions as needed (e.g., showModal, updateInventoryDisplay)
+ 
+ export {
     initializeUIManager,
     updateStatusBar,
     updateTimeDisplay,
+    updatePlayerTitleDisplay, // Export new function
     updateSelectedTileInfo,
     handleBuildingInteraction,
     showInteractionMenu, // Export the function

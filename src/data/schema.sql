@@ -3,7 +3,9 @@
 -- Player Table
 CREATE TABLE IF NOT EXISTS Player (
     player_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    name TEXT NOT NULL DEFAULT 'Adventurer',
+    name TEXT NOT NULL DEFAULT 'Adventurer', -- First name
+    surname TEXT, -- Last name (optional)
+    gender TEXT DEFAULT 'unknown', -- Added gender
     hunger REAL NOT NULL DEFAULT 100.0,
     thirst REAL NOT NULL DEFAULT 100.0,
     health REAL NOT NULL DEFAULT 100.0,
@@ -12,6 +14,7 @@ CREATE TABLE IF NOT EXISTS Player (
     current_tile_y INTEGER NOT NULL DEFAULT 0,
     household_id INTEGER, -- Link to the player's household
     current_mount_id TEXT, -- ID of the currently equipped mount (e.g., 'horse'), NULL if none
+    title_id TEXT NOT NULL DEFAULT 'commoner', -- Link to titlesData.js id
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (household_id) REFERENCES Households(household_id)
@@ -39,6 +42,7 @@ CREATE TABLE IF NOT EXISTS NPCs (
     hunger REAL NOT NULL DEFAULT 100.0,
     thirst REAL NOT NULL DEFAULT 100.0,
     health REAL NOT NULL DEFAULT 100.0,
+    title_id TEXT NOT NULL DEFAULT 'commoner', -- Link to titlesData.js id
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (household_id) REFERENCES Households(household_id)
@@ -87,16 +91,20 @@ CREATE TABLE IF NOT EXISTS Buildings (
 -- Inventory Table (Items held by Households or potentially Buildings)
 CREATE TABLE IF NOT EXISTS Inventory (
     inventory_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    household_id INTEGER, -- Item belongs to this household
+    player_id INTEGER, -- OR item belongs directly to the player
+    household_id INTEGER, -- OR item belongs to this household
     building_id INTEGER, -- OR item is stored in this building (e.g., workshop output)
     item_type TEXT NOT NULL, -- e.g., Wood, Stone, Bread, Axe
     quantity INTEGER NOT NULL DEFAULT 1,
     condition REAL DEFAULT 100.0, -- For tools/equipment
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (player_id) REFERENCES Player(player_id),
     FOREIGN KEY (household_id) REFERENCES Households(household_id),
     FOREIGN KEY (building_id) REFERENCES Buildings(building_id),
-    CHECK (household_id IS NOT NULL OR building_id IS NOT NULL) -- Must belong to one
+    CHECK ( (player_id IS NOT NULL AND household_id IS NULL AND building_id IS NULL) OR
+            (player_id IS NULL AND household_id IS NOT NULL AND building_id IS NULL) OR
+            (player_id IS NULL AND household_id IS NULL AND building_id IS NOT NULL) ) -- Must belong to exactly one owner type
 );
 
 -- Skills Table (Could be linked to Player or NPCs)
@@ -108,8 +116,8 @@ CREATE TABLE IF NOT EXISTS Skills (
     level INTEGER NOT NULL DEFAULT 1,
     experience REAL NOT NULL DEFAULT 0.0,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    -- Add UNIQUE constraint on (owner_id, owner_type, skill_name) if needed
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(owner_id, owner_type, skill_name) -- Ensure each entity has only one entry per skill
 );
 
 -- Add basic triggers for updated_at timestamps

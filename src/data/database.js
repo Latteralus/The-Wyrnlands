@@ -2,9 +2,7 @@
 // Manages the sql.js database instance and interactions.
 // Refactored for Node.js/Vitest compatibility.
 
-// Node.js specific imports removed for browser compatibility
-// import fs from 'fs';
-// import path from 'path';
+// Node.js specific imports needed for test environment compatibility
 // Import removed - rely on initSqlJs being globally available from <script> tag in index.html
 // import initSqlJs from 'sql.js';
 
@@ -46,22 +44,82 @@ async function initializeDatabase() {
                 locateFile: file => `/lib/${file}` // Points to the /lib directory relative to server root
             });
 
+            // Close existing DB if it exists, before creating a new one
+            if (db) {
+                console.log("Closing existing database instance...");
+                db.close();
+                db = null;
+            }
             // Create a new database instance (in memory for now)
             db = new SQL.Database();
-            console.log("sql.js loaded and database instance created.");
+            console.log("sql.js loaded and new database instance created.");
+// Fetch or read schema SQL based on environment
+let schemaSql = '';
+const schemaPath = 'src/data/schema.sql'; // Relative path from project root
 
-            // Fetch the schema SQL file using browser's fetch API
-            console.log("Fetching schema file from /src/data/schema.sql...");
-            const schemaResponse = await fetch('/src/data/schema.sql'); // Path relative to server root
-            if (!schemaResponse.ok) {
-                throw new Error(`Failed to fetch schema.sql: ${schemaResponse.status} ${schemaResponse.statusText}`);
-            }
-            const schemaSql = await schemaResponse.text();
-            console.log("Schema file fetched successfully.");
+// Check if running in a Node-like environment OR jsdom test environment vs browser
+const isNode = typeof process !== 'undefined' && process.versions != null && process.versions.node != null;
+const isJsdom = typeof navigator !== 'undefined' && navigator.userAgent.includes('jsdom');
 
-            // Execute the schema SQL to create tables
-            db.exec(schemaSql);
-            console.log("Database schema applied successfully.");
+if (isNode || isJsdom) {
+    // Node.js or jsdom environment: Use fs to read the file
+    console.log("Node environment detected, reading schema using fs...");
+    try {
+        // Resolve path relative to the current working directory (project root)
+        const absoluteSchemaPath = path.resolve(process.cwd(), schemaPath);
+        console.log(`Attempting to read schema from: ${absoluteSchemaPath}`);
+        if (!fs.existsSync(absoluteSchemaPath)) {
+            throw new Error(`Schema file not found at ${absoluteSchemaPath}`);
+        }
+        schemaSql = fs.readFileSync(absoluteSchemaPath, 'utf8');
+        console.log("Schema read successfully using fs.");
+    } catch (fsError) {
+        console.error("Error reading schema file with fs:", fsError);
+        throw fsError; // Re-throw to stop initialization
+    }
+} else {
+    // Browser environment: Use fetch
+    console.log(`Browser environment detected, fetching schema from /${schemaPath}...`);
+    try {
+        // Add cache-busting parameter to prevent browser from using old schema
+        const cacheBuster = `?t=${Date.now()}`;
+        const response = await fetch(`/${schemaPath}${cacheBuster}`);
+        if (!response.ok) throw new Error(`HTTP error! status: ${response.status} ${response.statusText}`);
+        schemaSql = await response.text();
+        console.log("Schema fetched successfully.");
+    } catch (fetchError) {
+        console.error("Error fetching schema file:", fetchError);
+        // Don't re-throw yet, we'll try the inline schema below
+        // throw fetchError;
+        schemaSql = ''; // Ensure schemaSql is empty if fetch fails
+    }
+}
+
+// --- Execute Schema ---
+// Drop tables first
+try {
+    console.log("Dropping existing tables (if exists) for schema update...");
+    db.exec("DROP TABLE IF EXISTS Player;");
+    db.exec("DROP TABLE IF EXISTS Skills;");
+    db.exec("DROP TABLE IF EXISTS Inventory;"); // Drop others that might be affected
+    db.exec("DROP TABLE IF EXISTS Households;");
+    db.exec("DROP TABLE IF EXISTS NPCs;");
+    db.exec("DROP TABLE IF EXISTS MapTiles;");
+    db.exec("DROP TABLE IF EXISTS Buildings;");
+} catch (dropError) {
+    console.warn("Could not drop tables (may not exist yet):", dropError);
+}
+
+// Apply the full schema from the fetched file
+if (schemaSql) {
+    db.exec(schemaSql);
+    console.log("Full schema applied successfully.");
+} else {
+     console.error("Schema SQL content was empty or failed to load. Cannot apply schema.");
+     throw new Error("Schema SQL content is empty or could not be loaded.");
+}
+
+// Removed inline schema debug check
 
             isInitialized = true;
             initializationPromise = null; // Reset promise after completion
@@ -122,10 +180,16 @@ async function get(sql, params = []) {
         const stmt = db.prepare(sql);
         // Use bind directly if params is an array, or named parameters if it's an object
         stmt.bind(params);
-        const result = stmt.getAsObject(); // Read the first row
+        let result = null;
+        // Check if a row exists using step() before trying to get data
+        if (stmt.step()) {
+            result = stmt.getAsObject(); // Read the first row
+            console.log(`DEBUG database.get: SQL executed. Row found: true`, result);
+        } else {
+            console.log(`DEBUG database.get: SQL executed. Row found: false`);
+        }
         stmt.free(); // Free the statement
-        // Check if the result object is empty (no row found)
-        return Object.keys(result).length > 0 ? result : null;
+        return result; // Return the object or null
     } catch (error) {
         console.error(`Error getting SQL: ${sql}`, params, error);
         throw error;

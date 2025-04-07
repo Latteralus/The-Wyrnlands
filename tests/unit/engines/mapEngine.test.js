@@ -10,14 +10,18 @@ import {
     updateTileProperties,
     _resetState, // Import the reset function
     createMapVisuals // Import the new function
-} from '@/engines/mapEngine.js'; // Using path alias
-import * as dbModule from '@/data/database.js'; // Import the actual module
+} from '../../../src/engines/mapEngine.js'; // Corrected path
+// No longer need to import the whole dbModule
+// import * as dbModule from '@/data/database.js';
 
-// Mock the database module
-vi.mock('@/data/database.js', () => ({
-   getDb: vi.fn(), // Mock the getDb function
-   // Mock other exports if mapEngine starts using them directly
+// Mock the database module's exported functions
+vi.mock('../../../src/data/database.js', () => ({
+    run: vi.fn(),
+    get: vi.fn(),
+    all: vi.fn(),
 }));
+// Import the mocked functions to configure them in tests
+import { run, get, all } from '../../../src/data/database.js';
 
 describe('Map Engine', () => {
 
@@ -25,7 +29,7 @@ describe('Map Engine', () => {
     const defaultWidth = 10;
     const defaultHeight = 10;
 
-    let mockDb; // To hold the mock DB object for configuration per test
+    // No longer need mockDb object
 
     beforeEach(() => {
         // Reset map engine state first
@@ -33,33 +37,22 @@ describe('Map Engine', () => {
         // Reset mocks before each test
         vi.clearAllMocks();
 
-        // Setup a default mock DB object. Tests can override methods as needed.
-        mockDb = {
-            get: vi.fn().mockResolvedValue(undefined), // Default: table/row doesn't exist
-            all: vi.fn().mockResolvedValue([]),       // Default: returns empty array
-            run: vi.fn().mockResolvedValue({ changes: 0 }), // Default: no changes made
-            prepare: vi.fn().mockResolvedValue({      // Default: returns mock statement
-                run: vi.fn().mockResolvedValue({ changes: 1 }),
-                finalize: vi.fn().mockResolvedValue(undefined),
-            }),
-            // Add mocks for beginTransaction, commit, rollback if needed, though run covers them for now
-        };
+        // Setup default mock behaviors for imported DB functions
+        get.mockResolvedValue(undefined); // Default: Not found
+        all.mockResolvedValue([]);       // Default: Empty result set
+        run.mockResolvedValue({ changes: 0 }); // Default: No changes made
 
-        // Configure the mocked getDb to return our mockDb object
-        dbModule.getDb.mockResolvedValue(mockDb);
-
-        // NOTE: We no longer call initializeMap here by default.
-        // Each test that requires an initialized map will call it
-        // after setting up specific mock DB responses for that test's scenario.
+        // NOTE: initializeMap needs to be called within each test that requires it,
+        // after specific mock behaviors for get/all/run are set for that test's scenario.
     });
 
     // No afterEach needed for vi.clearAllMocks() as beforeEach handles it.
 
     it('should initialize the map with specified dimensions after successful initialization', async () => {
-        // Arrange: Mock DB to simulate empty table, triggering generation
-        mockDb.get.mockResolvedValue({ count: 0 }); // Simulate empty table check
-        mockDb.all.mockResolvedValueOnce([]); // For PRAGMA check if used
-                 // .mockResolvedValueOnce([]); // For SELECT check if used
+        // Arrange: Mock DB functions for empty map scenario
+        get.mockResolvedValue({ count: 0 }); // For COUNT(*) check
+        all.mockResolvedValueOnce([]); // For PRAGMA check
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success for generateAndSaveDefaultMap
 
         // Act
         await initializeMap(defaultWidth, defaultHeight);
@@ -70,9 +63,10 @@ describe('Map Engine', () => {
     });
 
     it('should create default tiles in memory when initializing an empty map', async () => {
-         // Arrange: Mock DB to simulate empty table
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+         // Arrange: Mock DB functions for empty map scenario
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
 
         // Act
         await initializeMap(defaultWidth, defaultHeight);
@@ -89,9 +83,10 @@ describe('Map Engine', () => {
     });
 
     it('getTile should return the correct tile object after initialization', async () => {
-        // Arrange: Mock DB for initialization
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Mock DB for initialization (empty map)
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
 
         // Act
         await initializeMap(defaultWidth, defaultHeight);
@@ -104,9 +99,10 @@ describe('Map Engine', () => {
     });
 
     it('getTile should return null for out-of-bounds coordinates after initialization', async () => {
-        // Arrange: Mock DB for initialization
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Mock DB for initialization (empty map)
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
 
         // Act & Assert
@@ -126,9 +122,10 @@ describe('Map Engine', () => {
 
 
     it('isWalkable should return true for default tiles after initialization', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Mock DB for initialization (empty map)
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
 
         // Act & Assert
@@ -136,12 +133,14 @@ describe('Map Engine', () => {
     });
 
     it('isWalkable should return false for non-walkable tiles after update', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 }); // Start empty
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Mock DB for initialization (empty map)
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        // Mock the DB update call to succeed
-        mockDb.run.mockResolvedValue({ changes: 1 });
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         await updateTileProperties(3, 4, { walkable: false }); // Now async
@@ -172,10 +171,10 @@ describe('Map Engine', () => {
         }
 
         const expectedCount = defaultWidth * defaultHeight;
-        mockDb.get.mockResolvedValue({ count: expectedCount }); // Simulate full map data exists
+        get.mockResolvedValue({ count: expectedCount }); // Simulate full map data exists
         // Mock PRAGMA to return something, indicating table exists
-        mockDb.all.mockResolvedValueOnce([{ name: 'tile_x' }, { name: 'tile_y' }])
-                 .mockResolvedValueOnce(mockTileData); // Mock SELECT to return the full mock data
+        all.mockResolvedValueOnce([{ name: 'tile_x' }, { name: 'tile_y' }]) // PRAGMA call
+           .mockResolvedValueOnce(mockTileData); // SELECT call
 
         // Act
         await initializeMap(defaultWidth, defaultHeight);
@@ -191,33 +190,25 @@ describe('Map Engine', () => {
         expect(tile10.type).toBe('grass');
         expect(tile10.walkable).toBe(true);
 
-        // Assert that DB SELECT was called
-        expect(mockDb.all).toHaveBeenCalledWith(expect.stringContaining('SELECT tile_x as x, tile_y as y'));
+        // Assert that DB SELECT was called using the imported 'all' mock
+        expect(all).toHaveBeenCalledWith(expect.stringContaining('SELECT tile_x as x, tile_y as y'));
         // Assert that DB INSERT was NOT called (because data was loaded)
-        expect(mockDb.prepare).not.toHaveBeenCalled();
+        expect(run).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO MapTiles')); // No inserts should happen
     });
 
     it('initializeMap should generate and save default data if DB is empty', async () => {
-        // Arrange: Mock DB to simulate empty table
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
-
-        // Mock the prepare statement for insertion
-        const mockStatement = {
-            run: vi.fn().mockResolvedValue({ changes: 1 }),
-            finalize: vi.fn().mockResolvedValue(undefined),
-        };
-        mockDb.prepare.mockResolvedValue(mockStatement);
+        // Arrange: Mock DB functions for empty map scenario
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        // Mock run for the insertions
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         await initializeMap(defaultWidth, defaultHeight);
 
-        // Assert: Check if DB prepare and run were called for insertion
-        expect(mockDb.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO MapTiles'));
-        // Check if statement.run was called for each tile
-        expect(mockStatement.run).toHaveBeenCalledTimes(defaultWidth * defaultHeight);
-        // Check if transaction commit was called (implicitly via db.run)
-        expect(mockDb.run).toHaveBeenCalledWith('COMMIT');
+        // Assert: Check if DB run was called for insertion for each tile
+        expect(run).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO MapTiles'), expect.any(Array));
+        expect(run).toHaveBeenCalledTimes(defaultWidth * defaultHeight); // Called for each tile insert
 
         // Assert: Check memory state as well
         const tile = getTile(0, 0);
@@ -226,7 +217,8 @@ describe('Map Engine', () => {
 
      it('initializeMap should handle DB error during load and fallback to in-memory', async () => {
          // Arrange: Mock getDb to throw an error
-         dbModule.getDb.mockRejectedValue(new Error("DB connection failed"));
+         // Simulate DB connection/function error by rejecting 'all' during init
+         all.mockRejectedValue(new Error("DB connection failed"));
          const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // Suppress console error
 
          // Act
@@ -244,78 +236,83 @@ describe('Map Engine', () => {
      });
 
     it('updateTileProperties should call DB run with correct SQL and parameters', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 }); // Init empty
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
-        mockDb.run.mockClear(); // Clear calls from initializeMap
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         const propsToUpdate = { type: 'forest', walkable: false, buildingId: 123 };
         await updateTileProperties(5, 6, propsToUpdate);
 
         // Assert
-        expect(mockDb.run).toHaveBeenCalledTimes(1); // Should now only count the UPDATE call
-        expect(mockDb.run).toHaveBeenCalledWith(
-            expect.stringContaining('UPDATE MapTiles SET type = ?, is_walkable = ?, building_id = ? WHERE tile_x = ? AND tile_y = ?'),
-            ['forest', 0, 123, 5, 6] // Values in correct order
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE MapTiles SET type = ?, is_walkable = ?, building_id = ?'),
+            ['forest', 0, 123, 5, 6]
         );
     });
 
      it('updateTileProperties should handle resource updates correctly in DB call', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 }); // Init empty
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
-        mockDb.run.mockClear(); // Clear calls from initializeMap
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         const propsToUpdate = { resource: { type: 'wood', amount: 50 } };
         await updateTileProperties(1, 2, propsToUpdate);
 
         // Assert
-        expect(mockDb.run).toHaveBeenCalledTimes(1); // Should now only count the UPDATE call
-        expect(mockDb.run).toHaveBeenCalledWith(
-            expect.stringContaining('UPDATE MapTiles SET resource_type = ?, resource_yield = ? WHERE tile_x = ? AND tile_y = ?'),
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE MapTiles SET resource_type = ?, resource_yield = ?'),
             ['wood', 50, 1, 2]
         );
      });
 
      it('updateTileProperties should handle setting resource to null correctly in DB call', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 }); // Init empty
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        // Set an initial resource in memory first
+        // Set an initial resource (this will also call run, need to clear after)
         await updateTileProperties(1, 2, { resource: { type: 'wood', amount: 50 } });
-        // Reset mock run call count and setup for the actual test call
-        mockDb.run.mockClear();
-        mockDb.run.mockResolvedValue({ changes: 1 });
+        run.mockClear(); // Clear the run call from the initial resource set
+        run.mockResolvedValue({ changes: 1 }); // Mock success for the null update
 
         // Act: Update resource to null
         const propsToUpdate = { resource: null };
         await updateTileProperties(1, 2, propsToUpdate);
 
         // Assert
-        expect(mockDb.run).toHaveBeenCalledTimes(1);
-        expect(mockDb.run).toHaveBeenCalledWith(
-            expect.stringContaining('UPDATE MapTiles SET resource_type = ?, resource_yield = ? WHERE tile_x = ? AND tile_y = ?'),
-            [null, null, 1, 2] // Expect nulls to be passed for resource columns
+        expect(run).toHaveBeenCalledTimes(1);
+        expect(run).toHaveBeenCalledWith(
+            expect.stringContaining('UPDATE MapTiles SET resource_type = ?, resource_yield = ?'),
+            [null, null, 1, 2]
         );
      });
 
 
     it('updateTileProperties should return false and revert memory if DB update fails', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 }); // Init empty
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        const originalTile = { ...getTile(4, 4) }; // Get original state
-        // Mock DB update to fail (e.g., return 0 changes or throw error)
-        mockDb.run.mockResolvedValue({ changes: 0 });
-        // const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const originalTile = { ...getTile(4, 4) };
+        // Mock DB update to fail
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 0 });
 
         // Act
         const result = await updateTileProperties(4, 4, { type: 'lava' });
@@ -324,7 +321,7 @@ describe('Map Engine', () => {
         expect(result).toBe(false);
         const currentTile = getTile(4, 4);
         expect(currentTile.type).toBe(originalTile.type); // Should have reverted to original 'grass'
-        expect(mockDb.run).toHaveBeenCalled(); // Ensure DB was attempted
+        expect(run).toHaveBeenCalled(); // Ensure DB was attempted
         // expect(consoleWarnSpy).toHaveBeenCalledWith(expect.stringContaining("Reverted in-memory update"));
         // consoleWarnSpy.mockRestore();
     });
@@ -332,8 +329,9 @@ describe('Map Engine', () => {
 
     it('isWalkable should return false for out-of-bounds coordinates after initialization', async () => {
         // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
 
         // Act & Assert
@@ -343,8 +341,9 @@ describe('Map Engine', () => {
 
     it('isBuildable should return true for default tiles after initialization', async () => {
         // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
 
         // Act & Assert
@@ -352,11 +351,14 @@ describe('Map Engine', () => {
     });
 
     it('isBuildable should return false for non-buildable tiles after update', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         await updateTileProperties(2, 2, { buildable: false }); // Now async
@@ -366,11 +368,14 @@ describe('Map Engine', () => {
     });
 
     it('isBuildable should return false if a building exists on the tile after update', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         await updateTileProperties(2, 2, { buildingId: 'building_123' }); // Now async
@@ -380,9 +385,10 @@ describe('Map Engine', () => {
     });
 
     it('isBuildable should return false for out-of-bounds coordinates after initialization', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
 
         // Act & Assert
@@ -391,11 +397,14 @@ describe('Map Engine', () => {
     });
 
     it('updateTileProperties should modify tile properties in memory', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         const newProps = { type: 'water', walkable: false, buildable: false };
@@ -409,29 +418,35 @@ describe('Map Engine', () => {
     });
 
     it('updateTileProperties should handle partial updates in memory', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
-        await updateTileProperties(1, 1, { type: 'forest' }); // Now async
+        await updateTileProperties(1, 1, { type: 'forest' });
 
-        // Assert (memory check)
-        const tile = getTile(1, 1);
+        // Assert (memory check *after* await)
+        const tile = getTile(1, 1); // Get tile state again after update
         expect(tile.type).toBe('forest');
         expect(tile.walkable).toBe(true); // Should remain default
         expect(tile.buildable).toBe(true); // Should remain default
     });
 
     it('updateTileProperties should not affect other tiles in memory', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
-        const originalTile = { ...getTile(6, 6) }; // Shallow copy before update
-        mockDb.run.mockResolvedValue({ changes: 1 }); // Mock DB update success
+        const originalTile = { ...getTile(6, 6) };
+        // Mock the specific DB update call to succeed
+        run.mockClear(); // Clear init calls
+        run.mockResolvedValue({ changes: 1 });
 
         // Act
         await updateTileProperties(7, 8, { type: 'water', walkable: false }); // Now async
@@ -443,12 +458,13 @@ describe('Map Engine', () => {
     });
 
     it('updateTileProperties should return false for out-of-bounds tiles', async () => {
-        // Arrange
-        mockDb.get.mockResolvedValue({ count: 0 });
-        mockDb.all.mockResolvedValueOnce([]); // PRAGMA
+        // Arrange: Initialize empty map
+        get.mockResolvedValue({ count: 0 });
+        all.mockResolvedValueOnce([]); // PRAGMA
+        run.mockResolvedValue({ changes: 1 }); // Mock insert success
         await initializeMap(defaultWidth, defaultHeight);
         const originalTile = { ...getTile(0, 0) };
-        mockDb.run.mockClear(); // Clear calls from initializeMap
+        run.mockClear(); // Clear init calls
 
         // Act
         const result = await updateTileProperties(-1, 0, { type: 'lava' }); // Now async
@@ -457,7 +473,7 @@ describe('Map Engine', () => {
         expect(result).toBe(false);
         const tile00 = getTile(0, 0);
         expect(tile00.type).toBe(originalTile.type); // Should be unchanged
-        expect(mockDb.run).not.toHaveBeenCalled(); // DB run should not have been called *after* mockClear
+        expect(run).not.toHaveBeenCalled(); // DB run should not have been called *after* mockClear
     });
 
 });
@@ -470,24 +486,17 @@ describe('Map Engine', () => {
      let mockGraphics;
      let mockText;
      let mockInput;
-     let mockDb;
- 
+     // No mockDb needed here, use imported mocks
+
      beforeEach(async () => {
          // Reset map engine state
          _resetState();
          vi.clearAllMocks();
- 
+
          // Mock Database for initialization
-         mockDb = {
-             get: vi.fn().mockResolvedValue({ count: 0 }), // Simulate empty table
-             all: vi.fn().mockResolvedValue([]), // Simulate empty table
-             run: vi.fn().mockResolvedValue({ changes: 1 }),
-             prepare: vi.fn().mockResolvedValue({
-                 run: vi.fn().mockResolvedValue({ changes: 1 }),
-                 finalize: vi.fn().mockResolvedValue(undefined),
-             }),
-         };
-         dbModule.getDb.mockResolvedValue(mockDb);
+         get.mockResolvedValue({ count: 0 }); // Simulate empty table
+         all.mockResolvedValue([]); // Simulate empty table
+         run.mockResolvedValue({ changes: 1 }); // Mock insert success
  
          // Initialize map before each visual test
          await initializeMap(defaultWidth, defaultHeight);

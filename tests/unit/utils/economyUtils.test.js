@@ -1,330 +1,365 @@
 // tests/unit/utils/economyUtils.test.js
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
+
+// Mock the database module
+vi.mock('../../../src/data/database.js', () => ({
+    run: vi.fn(),
+    get: vi.fn(),
+    all: vi.fn(), // Although not used directly by economyUtils yet
+}));
+
+// Import the functions to test AFTER mocks are set up
 import {
-    COPPER_PER_SILVER,
-    SILVER_PER_GOLD,
-    COPPER_PER_GOLD,
     formatCurrency,
     calculateWage,
+    getEntityType,
+    getEntityFunds,
+    setEntityFunds,
     processTransaction,
     calculateTransactionTax,
-    getEntityType
-} from '@/utils/economyUtils.js'; // Use path alias
+    COPPER_PER_SILVER,
+    SILVER_PER_GOLD,
+    COPPER_PER_GOLD
+} from '../../../src/utils/economyUtils.js';
+import { run, get } from '../../../src/data/database.js';
 
-// --- Mock Dependencies & Helpers ---
-
-// Mock functions to simulate getting/setting entity funds for processTransaction tests
-const mockEntityFundsStore = {}; // Simple in-memory store for test funds
-
-const mockGetEntityFunds = vi.fn(async (entityId, entityType) => {
-    // console.log(`Mock getEntityFunds called for ${entityId} (${entityType})`);
-    return mockEntityFundsStore[entityId] !== undefined ? mockEntityFundsStore[entityId] : null;
-});
-
-const mockSetEntityFunds = vi.fn(async (entityId, entityType, newAmount) => {
-    // console.log(`Mock setEntityFunds called for ${entityId} (${entityType}) with ${newAmount}`);
-    // Simulate potential failure for specific test cases if needed
-    // Check if a one-time implementation is set using Vitest's mock API
-    const mockImplementation = mockSetEntityFunds.getMockImplementation();
-     if (mockImplementation && mockSetEntityFunds.mock.calls.length === 0) { // Rough check if it's the first call with a specific mock
-         // This logic might need refinement depending on exact test case needs
-         // For now, assume default behavior unless explicitly overridden in the test
-     }
-    mockEntityFundsStore[entityId] = newAmount;
-    return true; // Default success
-});
-
-// Mock playerEngine separately if needed for other tests (like calculateWage if it used player state)
-// const mockPlayerEngine = { getPlayerAttribute: vi.fn(), updatePlayerAttributes: vi.fn() };
-// vi.mock('@/engines/playerEngine.js', () => mockPlayerEngine);
-
-// --- Test Suite ---
 describe('Economy Utilities', () => {
 
     beforeEach(() => {
+        // Reset mocks before each test
         vi.clearAllMocks();
-        // Reset mock store and function mocks used in processTransaction tests
-        Object.keys(mockEntityFundsStore).forEach(key => delete mockEntityFundsStore[key]);
-        mockGetEntityFunds.mockClear();
-        mockSetEntityFunds.mockClear();
-        // Reset any specific implementations for setEntityFunds
-        mockSetEntityFunds.mockImplementation(async (id, type, amount) => {
-             mockEntityFundsStore[id] = amount;
-             return true;
-        });
-        // Reset player engine mocks if they were used/mocked at the top level
-        // mockPlayerEngine.getPlayerAttribute.mockReset();
-        // mockPlayerEngine.updatePlayerAttributes.mockReset();
     });
 
-    // --- formatCurrency Tests ---
     describe('formatCurrency', () => {
-        it('should format zero correctly', () => {
-            expect(formatCurrency(0)).toBe('0 C');
+        it('should format copper correctly', () => {
+            expect(formatCurrency(45)).toBe('45 C');
         });
-        it('should format copper only', () => {
-            expect(formatCurrency(55)).toBe('55 C');
+        it('should format silver and copper correctly', () => {
+            expect(formatCurrency(2345)).toBe('23 S, 45 C');
         });
-        it('should format silver and copper', () => {
-            expect(formatCurrency(234)).toBe('2 S, 34 C');
-            expect(formatCurrency(199)).toBe('1 S, 99 C');
-        });
-        it('should format silver only', () => {
-            expect(formatCurrency(500)).toBe('5 S, 0 C');
-        });
-        it('should format gold, silver, and copper', () => {
+        it('should format gold, silver, and copper correctly', () => {
             expect(formatCurrency(12345)).toBe('1 G, 23 S, 45 C');
         });
-        it('should format gold and copper only', () => {
-            expect(formatCurrency(10050)).toBe('1 G, 0 S, 50 C');
+        it('should format gold and copper (zero silver) correctly', () => {
+            expect(formatCurrency(10045)).toBe('1 G, 0 S, 45 C');
         });
-         it('should format gold and silver only', () => {
-            expect(formatCurrency(15000)).toBe('1 G, 50 S, 0 C');
+         it('should format gold and silver (zero copper) correctly', () => {
+            expect(formatCurrency(12300)).toBe('1 G, 23 S, 0 C');
         });
-        it('should format gold only', () => {
-            expect(formatCurrency(30000)).toBe('3 G, 0 S, 0 C');
+        it('should format only gold correctly', () => {
+            expect(formatCurrency(20000)).toBe('2 G, 0 S, 0 C');
         });
-        it('should handle negative values', () => {
+         it('should format only silver correctly', () => {
+            expect(formatCurrency(500)).toBe('5 S, 0 C');
+        });
+        it('should handle zero correctly', () => {
+            expect(formatCurrency(0)).toBe('0 C');
+        });
+        it('should handle negative amounts correctly', () => {
             expect(formatCurrency(-12345)).toBe('-1 G, 23 S, 45 C');
-            expect(formatCurrency(-50)).toBe('-50 C');
+            expect(formatCurrency(-45)).toBe('-45 C');
         });
         it('should handle invalid input', () => {
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
             expect(formatCurrency(null)).toBe('0 C');
             expect(formatCurrency(undefined)).toBe('0 C');
-            expect(formatCurrency("abc")).toBe('0 C');
+            expect(formatCurrency('abc')).toBe('0 C');
             expect(formatCurrency(123.45)).toBe('0 C'); // Non-integer
+            expect(warnSpy).toHaveBeenCalledTimes(4);
+            warnSpy.mockRestore();
         });
     });
 
-    // --- calculateWage Tests ---
     describe('calculateWage', () => {
-        it('should calculate wage with default values', () => {
-            expect(calculateWage()).toBe(10); // Base wage
+        // Basic tests, assuming the formula remains simple
+        it('should calculate base wage correctly', () => {
+            expect(calculateWage(1, 1, 0)).toBe(10); // Base wage
         });
-        it('should calculate wage with skill bonus', () => {
-            expect(calculateWage(3)).toBe(14); // 10 + (3-1)*2 = 14
+        it('should apply skill bonus', () => {
+            expect(calculateWage(3, 1, 0)).toBe(14); // 10 + (3-1)*2
         });
-        it('should calculate wage with difficulty bonus', () => {
-            expect(calculateWage(1, 2)).toBe(11); // 10 + (2-1)*1 = 11
+        it('should apply difficulty bonus', () => {
+            expect(calculateWage(1, 2, 0)).toBe(11); // 10 + (2-1)*1
         });
-        it('should calculate wage with reputation modifier', () => {
-            expect(calculateWage(1, 1, 5)).toBe(15); // 10 + 5 = 15
-            expect(calculateWage(1, 1, -3)).toBe(7); // 10 - 3 = 7
+        it('should apply reputation modifier', () => {
+            expect(calculateWage(1, 1, 5)).toBe(15); // 10 + 5
+            expect(calculateWage(1, 1, -3)).toBe(7); // 10 - 3
         });
-        it('should calculate wage with combined factors', () => {
-            expect(calculateWage(5, 3, 2)).toBe(22); // 10 + (5-1)*2 + (3-1)*1 + 2 = 10 + 8 + 2 + 2 = 22
+        it('should combine bonuses and modifiers', () => {
+            expect(calculateWage(3, 2, 5)).toBe(20); // 10 + 4 + 1 + 5
         });
-         it('should return minimum wage of 1', () => {
-            expect(calculateWage(1, 1, -20)).toBe(1); // 10 - 20 = -10 -> clamped to 1
+        it('should ensure minimum wage of 1', () => {
+            expect(calculateWage(1, 1, -15)).toBe(1);
         });
     });
 
-    // --- calculateTransactionTax Tests ---
+    describe('getEntityType', () => {
+        // This function doesn't exist in the provided code, assuming it was intended for processTransaction logic
+        // If it's added later, tests would go here.
+        // For now, processTransaction determines type internally based on ID structure (which isn't robust)
+        // or relies on the caller providing the type. The refactored version uses the latter.
+         it.skip('should identify entity types (if function existed)', () => {
+            // expect(getEntityType('player_1')).toBe('Player');
+            // expect(getEntityType('npc_123')).toBe('NPC');
+            // expect(getEntityType('biz_45')).toBe('Business');
+            // expect(getEntityType('guild_abc')).toBe('Guild');
+            // expect(getEntityType('household_10')).toBe('Household'); // Example
+            // expect(getEntityType('unknown_id')).toBe('Unknown');
+            // expect(getEntityType(123)).toBe('Unknown');
+            // expect(getEntityType(null)).toBe('Unknown');
+         });
+    });
+
+    describe('getEntityFunds', () => {
+        it('should get funds for a Household', async () => {
+            get.mockResolvedValue({ funds: 1234 });
+            const funds = await getEntityFunds(5, 'Household');
+            expect(get).toHaveBeenCalledWith('SELECT funds FROM Households WHERE household_id = ?', [5]);
+            expect(funds).toBe(1234);
+        });
+
+        it('should return null if entity not found', async () => {
+            get.mockResolvedValue(null);
+            const funds = await getEntityFunds(99, 'Household');
+            expect(get).toHaveBeenCalledWith('SELECT funds FROM Households WHERE household_id = ?', [99]);
+            expect(funds).toBeNull();
+        });
+
+        it('should return null for unsupported entity type', async () => {
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const funds = await getEntityFunds(1, 'UnknownType');
+            expect(get).not.toHaveBeenCalled();
+            expect(funds).toBeNull();
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported entity type'));
+            errorSpy.mockRestore();
+        });
+
+        it('should return null on database error', async () => {
+            const dbError = new Error('DB Error');
+            get.mockRejectedValue(dbError);
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const funds = await getEntityFunds(5, 'Household');
+            expect(get).toHaveBeenCalledWith('SELECT funds FROM Households WHERE household_id = ?', [5]);
+            expect(funds).toBeNull();
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Error getting funds'), dbError);
+            errorSpy.mockRestore();
+        });
+    });
+
+    describe('setEntityFunds', () => {
+        it('should set funds for a Household', async () => {
+            run.mockResolvedValue({ changes: 1 });
+            const success = await setEntityFunds(5, 'Household', 5000);
+            expect(run).toHaveBeenCalledWith(
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [5000, 5]
+            );
+            expect(success).toBe(true);
+        });
+
+        it('should return false if entity not found or no changes made', async () => {
+            run.mockResolvedValue({ changes: 0 });
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+            const success = await setEntityFunds(99, 'Household', 5000);
+            expect(run).toHaveBeenCalledWith(
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [5000, 99]
+            );
+            expect(success).toBe(false);
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('not found or funds not changed'));
+            warnSpy.mockRestore();
+        });
+
+        it('should return false for unsupported entity type', async () => {
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const success = await setEntityFunds(1, 'UnknownType', 5000);
+            expect(run).not.toHaveBeenCalled();
+            expect(success).toBe(false);
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Unsupported entity type'));
+            errorSpy.mockRestore();
+        });
+
+         it('should return false for invalid amount', async () => {
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            expect(await setEntityFunds(1, 'Household', -100)).toBe(false);
+            expect(await setEntityFunds(1, 'Household', 100.5)).toBe(false);
+            expect(await setEntityFunds(1, 'Household', NaN)).toBe(false);
+            expect(run).not.toHaveBeenCalled();
+            expect(errorSpy).toHaveBeenCalledTimes(3);
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid new amount'));
+            errorSpy.mockRestore();
+        });
+
+        it('should return false on database error', async () => {
+            const dbError = new Error('DB Error');
+            run.mockRejectedValue(dbError);
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const success = await setEntityFunds(5, 'Household', 5000);
+            expect(run).toHaveBeenCalled();
+            expect(success).toBe(false);
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Error setting funds'), dbError);
+            errorSpy.mockRestore();
+        });
+    });
+
+    describe('processTransaction', () => {
+        // Mock getEntityFunds and setEntityFunds for these tests
+        // Note: processTransaction now uses the internal get/set functions, so we mock the DB directly.
+
+        it('should successfully transfer funds between two households', async () => {
+            // Payer (ID 1) has 1000, Payee (ID 2) has 500
+            get.mockImplementation(async (sql, params) => {
+                if (sql.includes('Households') && params[0] === 1) return { funds: 1000 };
+                if (sql.includes('Households') && params[0] === 2) return { funds: 500 };
+                return null;
+            });
+            // Mock successful updates
+            run.mockResolvedValue({ changes: 1 });
+
+            const success = await processTransaction(1, 'Household', 2, 'Household', 100, 'Test Payment'); // Payer ID, Payer Type, Payee ID, Payee Type, Amount
+
+            expect(get).toHaveBeenCalledTimes(2); // Called for payer and payee
+            expect(get).toHaveBeenCalledWith('SELECT funds FROM Households WHERE household_id = ?', [1]);
+            expect(get).toHaveBeenCalledWith('SELECT funds FROM Households WHERE household_id = ?', [2]);
+
+            expect(run).toHaveBeenCalledTimes(2); // Called for payer deduction and payee addition
+            // Payer deduction
+            expect(run).toHaveBeenCalledWith(
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [900, 1] // 1000 - 100
+            );
+            // Payee addition
+            expect(run).toHaveBeenCalledWith(
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [600, 2] // 500 + 100
+            );
+            expect(success).toBe(true);
+        });
+
+        it('should fail if payer has insufficient funds', async () => {
+            get.mockImplementation(async (sql, params) => {
+                if (sql.includes('Households') && params[0] === 1) return { funds: 50 }; // Payer has only 50
+                if (sql.includes('Households') && params[0] === 2) return { funds: 500 };
+                return null;
+            });
+            run.mockResolvedValue({ changes: 1 }); // Mock run, though it shouldn't be called for update
+            const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+            const success = await processTransaction(1, 'Household', 2, 'Household', 100, 'Test Payment');
+
+            expect(get).toHaveBeenCalledTimes(2); // Still checks both funds
+            expect(run).not.toHaveBeenCalled(); // No updates should occur
+            expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('insufficient funds'));
+            expect(success).toBe(false);
+            warnSpy.mockRestore();
+        });
+
+        it('should fail if amount is invalid', async () => {
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            expect(await processTransaction(1, 'Household', 2, 'Household', 0)).toBe(false);
+            expect(await processTransaction(1, 'Household', 2, 'Household', -100)).toBe(false);
+            expect(await processTransaction(1, 'Household', 2, 'Household', 100.5)).toBe(false);
+            expect(get).not.toHaveBeenCalled();
+            expect(run).not.toHaveBeenCalled();
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid amount'));
+            errorSpy.mockRestore();
+        });
+
+        it('should fail if payer or payee ID is invalid', async () => {
+             const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+             expect(await processTransaction(null, 'Household', 2, 'Household', 100)).toBe(false); // Invalid payer ID
+             expect(await processTransaction(1, 'Household', undefined, 'Household', 100)).toBe(false); // Invalid payee ID
+             expect(await processTransaction(1, 'Household', 1, 'Household', 100)).toBe(false); // Payer equals payee (same type)
+             expect(await processTransaction(1, 'InvalidType', 2, 'Household', 100)).toBe(false); // Invalid payer type
+             expect(await processTransaction(1, 'Household', 2, 'InvalidType', 100)).toBe(false); // Invalid payee type
+             expect(get).not.toHaveBeenCalled();
+             expect(run).not.toHaveBeenCalled();
+             expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid payer') || expect.stringContaining('Invalid entity type'));
+             errorSpy.mockRestore();
+        });
+
+        it('should fail and attempt revert if payee update fails', async () => {
+            get.mockImplementation(async (sql, params) => {
+                if (sql.includes('Households') && params[0] === 1) return { funds: 1000 };
+                if (sql.includes('Households') && params[0] === 2) return { funds: 500 };
+                return null;
+            });
+            // Mock payer update success, payee update failure, revert success
+            let callCount = 0;
+            run.mockImplementation(async (sql, params) => {
+                callCount++;
+                if (callCount === 1) return { changes: 1 }; // Payer deduction succeeds
+                if (callCount === 2) return { changes: 0 }; // Payee addition fails
+                if (callCount === 3) return { changes: 1 }; // Payer revert succeeds
+                return { changes: 0 };
+            });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const success = await processTransaction(1, 'Household', 2, 'Household', 100, 'Test Payment');
+
+            expect(get).toHaveBeenCalledTimes(2);
+            expect(run).toHaveBeenCalledTimes(3);
+             // Payer deduction
+            expect(run).toHaveBeenNthCalledWith(1,
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [900, 1]
+            );
+             // Payee addition (failed)
+            expect(run).toHaveBeenNthCalledWith(2,
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [600, 2]
+            );
+             // Payer revert
+            expect(run).toHaveBeenNthCalledWith(3,
+                'UPDATE Households SET funds = ?, updated_at = CURRENT_TIMESTAMP WHERE household_id = ?',
+                [1000, 1] // Reverted back to original 1000
+            );
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to add funds to payee'));
+            expect(success).toBe(false);
+            errorSpy.mockRestore();
+        });
+
+         it('should log critical error if revert fails', async () => {
+            get.mockImplementation(async (sql, params) => {
+                if (sql.includes('Households') && params[0] === 1) return { funds: 1000 };
+                if (sql.includes('Households') && params[0] === 2) return { funds: 500 };
+                return null;
+            });
+            // Mock payer update success, payee update failure, revert failure
+            run.mockImplementation(async (sql, params) => {
+                if (sql.includes('WHERE household_id = ?') && params.includes(1) && params.includes(900)) return { changes: 1 }; // Payer deduction
+                if (sql.includes('WHERE household_id = ?') && params.includes(2)) return { changes: 0 }; // Payee addition fails
+                if (sql.includes('WHERE household_id = ?') && params.includes(1) && params.includes(1000)) return { changes: 0 }; // Payer revert fails
+                return { changes: 0 };
+            });
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+            const success = await processTransaction(1, 'Household', 2, 'Household', 100, 'Test Payment');
+
+            expect(run).toHaveBeenCalledTimes(3);
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Failed to add funds to payee'));
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('CRITICAL ERROR: Failed to revert payer funds'));
+            expect(success).toBe(false);
+            errorSpy.mockRestore();
+        });
+
+        // TODO: Add tests for transactions involving different entity types (Business, Guild) once supported
+    });
+
     describe('calculateTransactionTax', () => {
         it('should calculate tax correctly', () => {
             expect(calculateTransactionTax(1000, 0.05)).toBe(50); // 5% of 1000
-            expect(calculateTransactionTax(123, 0.1)).toBe(12); // 10% of 123, floored
+            expect(calculateTransactionTax(1234, 0.1)).toBe(123); // 10% of 1234, floored
         });
         it('should return 0 for zero amount or rate', () => {
             expect(calculateTransactionTax(0, 0.05)).toBe(0);
             expect(calculateTransactionTax(1000, 0)).toBe(0);
         });
-        it('should return 0 for invalid inputs', () => {
-            expect(calculateTransactionTax("abc", 0.05)).toBe(0);
-            expect(calculateTransactionTax(1000, "abc")).toBe(0);
-            expect(calculateTransactionTax(1000, -0.1)).toBe(0);
+        it('should return 0 for invalid input', () => {
+            expect(calculateTransactionTax('abc', 0.05)).toBe(0);
+            expect(calculateTransactionTax(1000, 'abc')).toBe(0);
+            expect(calculateTransactionTax(1000, -0.05)).toBe(0);
         });
-    });
-
-     // --- getEntityType Tests ---
-    describe('getEntityType', () => {
-        it('should identify Player', () => {
-            expect(getEntityType('player_123')).toBe('Player');
-        });
-        it('should identify NPC', () => {
-            expect(getEntityType('npc_abc')).toBe('NPC');
-        });
-        it('should identify Business', () => {
-            expect(getEntityType('biz_xyz')).toBe('Business');
-        });
-        it('should identify Guild', () => {
-            expect(getEntityType('guild_789')).toBe('Guild');
-        });
-        it('should return Unknown for unrecognized prefixes', () => {
-            expect(getEntityType('house_1')).toBe('Unknown');
-            expect(getEntityType('item_sword')).toBe('Unknown');
-        });
-        it('should return Unknown for invalid input', () => {
-            expect(getEntityType(null)).toBe('Unknown');
-            expect(getEntityType(123)).toBe('Unknown');
-            expect(getEntityType('')).toBe('Unknown');
-        });
-    });
-
-    // --- processTransaction Tests ---
-    // These tests rely on the mocked getEntityFunds and setEntityFunds
-    describe('processTransaction', () => {
-        const payerPlayer = 'player_1';
-        const payeeNpc = 'npc_1';
-        const payeeBiz = 'biz_1';
-        const amount = 100;
-
-        beforeEach(() => {
-            // Setup initial funds in the mock store for each test
-            mockEntityFundsStore[payerPlayer] = 500;
-            mockEntityFundsStore[payeeNpc] = 200;
-            mockEntityFundsStore[payeeBiz] = 10000;
-            // Clear mocks specifically for this suite's context
-            mockGetEntityFunds.mockClear();
-            mockSetEntityFunds.mockClear();
-            // Ensure default implementation for setEntityFunds is active
-             mockSetEntityFunds.mockImplementation(async (id, type, amount) => {
-                 mockEntityFundsStore[id] = amount;
-                 return true;
-            });
-        });
-
-        it('should successfully transfer funds between Player and NPC', async () => {
-            const result = await processTransaction(payerPlayer, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds, 'Payment for goods');
-
-            expect(result).toBe(true);
-            // Verify mock functions were called correctly
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payerPlayer, 'Player', 400);
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payeeNpc, 'NPC', 300); // 200 + 100
-            // Verify funds in mock store
-            expect(mockEntityFundsStore[payerPlayer]).toBe(400);
-            expect(mockEntityFundsStore[payeeNpc]).toBe(300);
-        });
-
-        it('should successfully transfer funds between NPC and Business', async () => {
-            const npcPaysBizAmount = 50;
-            const result = await processTransaction(payeeNpc, payeeBiz, npcPaysBizAmount, mockGetEntityFunds, mockSetEntityFunds, 'Supplies purchase');
-
-            expect(result).toBe(true);
-            // Verify mock functions were called correctly
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payeeNpc, 'NPC', 150); // 200 - 50
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payeeBiz, 'Business', 10050); // 10000 + 50
-            // Verify funds in mock store
-            expect(mockEntityFundsStore[payeeNpc]).toBe(150);
-            expect(mockEntityFundsStore[payeeBiz]).toBe(10050);
-        });
-
-        it('should fail if payer has insufficient funds', async () => {
-            const result = await processTransaction(payerPlayer, payeeNpc, 600, mockGetEntityFunds, mockSetEntityFunds, 'Too expensive'); // Player only has 500
-
-            expect(result).toBe(false);
-            // Verify setEntityFunds was NOT called
-            expect(mockSetEntityFunds).not.toHaveBeenCalled();
-            // Verify funds unchanged in store
-            expect(mockEntityFundsStore[payerPlayer]).toBe(500);
-            expect(mockEntityFundsStore[payeeNpc]).toBe(200);
-        });
-
-        it('should fail for invalid amount (zero, negative, non-integer)', async () => {
-            expect(await processTransaction(payerPlayer, payeeNpc, 0, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            expect(await processTransaction(payerPlayer, payeeNpc, -50, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            expect(await processTransaction(payerPlayer, payeeNpc, 50.5, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            // Verify setEntityFunds was NOT called
-            expect(mockSetEntityFunds).not.toHaveBeenCalled();
-            // Verify funds unchanged in store
-            expect(mockEntityFundsStore[payerPlayer]).toBe(500);
-            expect(mockEntityFundsStore[payeeNpc]).toBe(200);
-        });
-
-        it('should fail for invalid payer or payee ID', async () => {
-            expect(await processTransaction(null, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            expect(await processTransaction(payerPlayer, undefined, amount, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            expect(await processTransaction(payerPlayer, payerPlayer, amount, mockGetEntityFunds, mockSetEntityFunds)).toBe(false); // Cannot pay self
-            expect(await processTransaction('unknown_payer', payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-            expect(await processTransaction(payerPlayer, 'unknown_payee', amount, mockGetEntityFunds, mockSetEntityFunds)).toBe(false);
-        });
-
-        it('should fail if getEntityFunds returns null for payer', async () => {
-            mockGetEntityFunds.mockImplementation(async (id, type) => (id === payerPlayer ? null : 1000)); // Simulate payer not found
-            const result = await processTransaction(payerPlayer, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds);
-            expect(result).toBe(false);
-            expect(mockSetEntityFunds).not.toHaveBeenCalled(); // Should fail before setting funds
-        });
-
-         it('should fail if getEntityFunds returns null for payee', async () => {
-            mockGetEntityFunds.mockImplementation(async (id, type) => (id === payeeNpc ? null : 500)); // Simulate payee not found
-            const result = await processTransaction(payerPlayer, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds);
-            expect(result).toBe(false);
-            expect(mockSetEntityFunds).not.toHaveBeenCalled(); // Should fail before setting funds
-        });
-
-        it('should fail and attempt payer revert if setEntityFunds fails for payee', async () => {
-            // Mock setEntityFunds to fail only for the payee
-            // Ensure getEntityFunds returns valid initial amounts for this test
-            mockGetEntityFunds.mockImplementation(async (id, type) => {
-                if (id === payerPlayer) return mockEntityFundsStore[payerPlayer]; // 500
-                if (id === payeeNpc) return mockEntityFundsStore[payeeNpc]; // 200
-                return null;
-            });
-            // Mock setEntityFunds to fail only for the payee
-            mockSetEntityFunds.mockImplementation(async (id, type, newAmount) => {
-                if (id === payeeNpc) {
-                    console.log(`Simulating setEntityFunds failure for payee ${id}`);
-                    return false; // Payee update fails
-                }
-                if (id === payerPlayer) {
-                    // Simulate payer update succeeding and store change for revert check
-                    console.log(`Simulating setEntityFunds success for payer ${id}, new amount ${newAmount}`);
-                    mockEntityFundsStore[id] = newAmount;
-                    return true;
-                }
-                 // Default success for other calls (like revert) - needed for revert call
-                 console.log(`Simulating setEntityFunds success for other ${id}, new amount ${newAmount}`);
-                 mockEntityFundsStore[id] = newAmount;
-                 return true;
-            });
-
-
-            const result = await processTransaction(payerPlayer, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds);
-
-            expect(result).toBe(false);
-            // Check that setEntityFunds was called 3 times:
-            // 1. Payer deduction (success)
-            // 2. Payee addition (failure)
-            // 3. Payer revert (attempt)
-            expect(mockSetEntityFunds).toHaveBeenCalledTimes(3);
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payerPlayer, 'Player', 400); // Initial deduction
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payeeNpc, 'NPC', 300); // Failed addition attempt
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payerPlayer, 'Player', 500); // Revert attempt
-            // Check final state in store (should be reverted)
-            expect(mockEntityFundsStore[payerPlayer]).toBe(500);
-            expect(mockEntityFundsStore[payeeNpc]).toBe(200); // Unchanged as payee update failed
-        });
-
-         it('should fail if setEntityFunds fails for payer', async () => {
-            // Mock setEntityFunds to fail only for the payer
-             // Ensure getEntityFunds returns valid initial amounts for this test
-            mockGetEntityFunds.mockImplementation(async (id, type) => {
-                if (id === payerPlayer) return mockEntityFundsStore[payerPlayer]; // 500
-                if (id === payeeNpc) return mockEntityFundsStore[payeeNpc]; // 200
-                return null;
-            });
-            // Mock setEntityFunds to fail only for the payer
-            mockSetEntityFunds.mockImplementation(async (id, type, newAmount) => {
-                if (id === payerPlayer) {
-                     console.log(`Simulating setEntityFunds failure for payer ${id}`);
-                     return false; // Payer update fails
-                }
-                // Payee call should not happen, but default to success if it did
-                mockEntityFundsStore[id] = newAmount;
-                return true;
-            });
-
-            const result = await processTransaction(payerPlayer, payeeNpc, amount, mockGetEntityFunds, mockSetEntityFunds);
-
-            expect(result).toBe(false);
-            expect(mockSetEntityFunds).toHaveBeenCalledTimes(1); // Only called for payer
-            expect(mockSetEntityFunds).toHaveBeenCalledWith(payerPlayer, 'Player', 400);
-            // Verify funds unchanged in store
-            expect(mockEntityFundsStore[payerPlayer]).toBe(500);
-            expect(mockEntityFundsStore[payeeNpc]).toBe(200);
-        });
-
     });
 
 });

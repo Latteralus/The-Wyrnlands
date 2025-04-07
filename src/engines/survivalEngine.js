@@ -1,10 +1,12 @@
 // src/engines/survivalEngine.js
 // Manages player survival needs like hunger and thirst.
 
-import { modifyNeed, getPlayerAttribute, updatePlayerAttributes } from './playerEngine.js'; // Use relative path
-// Removed import of registerDailyCallback as timeEngine uses a single main tick callback
+// Removed direct playerEngine imports - functions will operate on passed entity state
+// import { modifyNeed, getPlayerAttribute, updatePlayerAttributes } from './playerEngine.js';
+// Removed timeEngine import
 // import { registerDailyCallback } from './timeEngine.js';
-import { showGameOver } from '../managers/uiManager.js'; // Use relative path
+// Removed uiManager import - death handling should be external
+// import { showGameOver } from '../managers/uiManager.js';
 
 // TODO: Consider environmental effects (temperature, weather) on needs.
 // TODO: Consider effects of actions (running, working) on needs.
@@ -20,65 +22,76 @@ const HEALTH_DAMAGE_PER_DAY = 5.0; // Damage if hunger or thirst is zero
 
 function initializeSurvivalEngine() {
     console.log("Initializing Survival Engine...");
-    // No longer registering callback here; logic will be called from main game tick
-    // registerDailyCallback(applyDailySurvivalDecay);
+    // No longer registering callback here; logic will be called from the main game tick or NPC tick processing.
     console.log("Survival Engine initialized and registered daily callback.");
 }
 
 // --- Decay Logic ---
 
 /**
- * Applies the daily decay to player's hunger and thirst.
- * Applies health damage if needs are depleted.
- * Checks for player death.
+ * Applies survival effects (hunger/thirst decay, starvation/dehydration damage) to a given entity state object.
+ * Note: This function MODIFIES the passed-in entityState object directly.
+ * The caller is responsible for persisting these changes using the appropriate engine's update function (e.g., updatePlayerAttributes, updateNpcAttributes).
+ * @param {object} entityState - The state object of the entity (Player or NPC). Must include hunger, thirst, health properties.
+ * @returns {{needsChanged: boolean, healthChanged: boolean, healthDamage: number, isDead: boolean}} - Object indicating the outcome.
  */
-async function applyDailySurvivalDecay() {
-    console.log("Applying daily survival decay...");
+function applySurvivalEffects(entityState) {
+    // Input validation
+    if (!entityState || typeof entityState.hunger !== 'number' || typeof entityState.thirst !== 'number' || typeof entityState.health !== 'number') {
+        console.error("Survival Engine: Invalid entityState passed to applySurvivalEffects.", entityState);
+        return { needsChanged: false, healthChanged: false, healthDamage: 0, isDead: false };
+    }
 
-    // Apply daily decay
-    // Using updatePlayerAttributes might be better if we want persistence guarantees,
-    // but modifyNeed is simpler for now if persistence is handled elsewhere (e.g., save game)
-    modifyNeed('hunger', -DAILY_HUNGER_DECAY);
-    modifyNeed('thirst', -DAILY_THIRST_DECAY);
+    const initialHunger = entityState.hunger;
+    const initialThirst = entityState.thirst;
+    const initialHealth = entityState.health;
+    // console.log(`Applying survival effects to entity (ID: ${entityState.id || 'Unknown'})...`); // Less noisy log
+
+    // Apply decay directly to the passed object
+    entityState.hunger -= DAILY_HUNGER_DECAY;
+    entityState.thirst -= DAILY_THIRST_DECAY;
+
+    // Clamp needs
+    if (entityState.hunger < 0) entityState.hunger = 0;
+    if (entityState.thirst < 0) entityState.thirst = 0;
 
     // Check needs and apply health damage if necessary
-    const currentHunger = getPlayerAttribute('hunger');
-    const currentThirst = getPlayerAttribute('thirst');
     let healthDamage = 0;
+    let healthChanged = false;
 
-    if (currentHunger <= 0 || currentThirst <= 0) {
-        if (currentHunger <= 0) console.warn("Player is starving!");
-        if (currentThirst <= 0) console.warn("Player is dehydrated!");
+    if (entityState.hunger <= 0 || entityState.thirst <= 0) {
+        // Apply health damage
         healthDamage = HEALTH_DAMAGE_PER_DAY;
-        modifyNeed('health', -healthDamage);
-        console.log(`Applied ${healthDamage} health damage due to depleted needs.`);
+        entityState.health -= healthDamage;
+        if (entityState.health < 0) entityState.health = 0;
+        healthChanged = true;
+        // console.warn(`Entity (ID: ${entityState.id || 'Unknown'}) taking ${healthDamage} damage from needs. Health: ${entityState.health}`);
     }
+
+    const needsChanged = entityState.hunger !== initialHunger || entityState.thirst !== initialThirst;
 
     // Check for death
-    const currentHealth = getPlayerAttribute('health');
-    if (currentHealth <= 0) {
-        console.error("Player has died!");
-        triggerDeathState();
+    const isDead = entityState.health <= 0;
+
+    if (isDead) {
+        console.error(`Entity (ID: ${entityState.id || 'Unknown'}) has died due to survival conditions!`);
+        // Death state is now handled by the caller based on the return value
     }
 
-    // Persist changes (optional here, could be done on save)
-    // await updatePlayerAttributes({ hunger: currentHunger, thirst: currentThirst, health: currentHealth });
+    return {
+        needsChanged,
+        healthChanged,
+        healthDamage,
+        isDead
+    };
 }
 
-/**
- * Handles the player death state.
- * (Placeholder - likely involves UI changes and disabling input)
- */
-function triggerDeathState() {
-    console.log("GAME OVER triggered.");
-    // Example: Disable game input, show game over screen
-    showGameOver("You succumbed to the harsh conditions.");
-    // TODO: Add logic to stop timeEngine, disable player input etc.
-}
+// Removed triggerDeathState - caller handles death based on return value
+
 
 // --- Exports ---
 export {
     initializeSurvivalEngine,
-    applyDailySurvivalDecay, // Export for potential manual triggering or testing
+    applySurvivalEffects, // Export the refactored function
     // Constants not exported unless needed externally
 };

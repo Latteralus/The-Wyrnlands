@@ -2,7 +2,8 @@
 // Manages the player's state, including attributes, needs, skills, etc.
 // Import specific database functions instead of getDb
 import { run, get, all } from '../data/database.js'; // Removed 'prepare'
-
+import { getTitleDefinition } from '../data/titlesData.js'; // Import title helper
+import { addItem } from '../utils/inventoryUtils.js'; // Import inventory function
 // TODO: Integrate with skillEngine, survivalEngine, etc.
 
 console.log("Player Engine Module Loaded");
@@ -21,7 +22,8 @@ let playerState = {
     name: "Adventurer", // Default name
     surname: "", // Added
     gender: "unknown", // Added
-    title: "", // Added (e.g., "Farmer", "Lord")
+    title: "", // DEPRECATED - Use title_id instead. Keep for potential compatibility during transition? Or remove? Let's remove for clarity.
+    title_id: 'commoner', // Default title ID
     x: DEFAULT_START_X, // Corrected starting X
     y: DEFAULT_START_Y, // Corrected starting Y
     hunger: STARTING_HUNGER,
@@ -32,6 +34,7 @@ let playerState = {
     inventory: {}, // Placeholder
     householdId: null, // Will be set/loaded
     currentMountId: null, // ID of the currently active mount (e.g., 'horse'), null if none
+    // title: "", // Removed deprecated field
 };
 
 let isInitialized = false;
@@ -46,7 +49,7 @@ let isInitialized = false;
  *                                  if a new player is being made.
  * @returns {Promise<void>}
  */
-async function initializePlayer(initialData = {}) {
+async function initializePlayer(initialData = { playerFirstName: null, playerLastName: null, startingTool: null }) { // Add defaults for new options
     console.log("Initializing player...");
 
     // Reset to defaults first
@@ -56,7 +59,8 @@ async function initializePlayer(initialData = {}) {
         name: "Adventurer",
         surname: "",
         gender: "unknown",
-        title: "",
+        // title: "", // Removed deprecated field
+        title_id: 'commoner', // Add default title_id
         x: DEFAULT_START_X,
         y: DEFAULT_START_Y,
         hunger: STARTING_HUNGER,
@@ -72,7 +76,9 @@ async function initializePlayer(initialData = {}) {
         inventory: {},
         householdId: null,
         ...initialData, // Apply overrides AFTER defaults are set
-        currentMountId: initialData.currentMountId || null // Ensure mount ID is handled
+        currentMountId: initialData.currentMountId || null, // Ensure mount ID is handled
+        // Explicitly add startingTool if provided, as it's not part of the default structure
+        startingTool: initialData.startingTool || null
     };
 
     try {
@@ -84,13 +90,16 @@ async function initializePlayer(initialData = {}) {
         // A proper implementation might involve selecting based on a user session or save file.
         const playerData = await get('SELECT * FROM Player ORDER BY player_id ASC LIMIT 1'); // Use imported get
 
-        if (playerData) {
+        // Check specifically for a valid player_id to ensure we loaded a real player
+        if (playerData && playerData.player_id !== null && playerData.player_id !== undefined) {
             console.log("Loading existing player data from database...");
+            console.log('DEBUG: Loaded playerData:', playerData); // Add log to inspect data
             playerState.id = playerData.player_id;
             playerState.name = playerData.name;
             playerState.surname = playerData.surname || ""; // Handle potential nulls from DB
             playerState.gender = playerData.gender || "unknown";
-            playerState.title = playerData.title || "";
+            // playerState.title = playerData.title || ""; // Removed deprecated field
+            playerState.title_id = playerData.title_id || 'commoner'; // Load title_id, default if null
             playerState.x = playerData.current_tile_x;
             playerState.y = playerData.current_tile_y;
             playerState.hunger = playerData.hunger;
@@ -105,24 +114,47 @@ async function initializePlayer(initialData = {}) {
             console.log("No player data found in DB. Creating new player entry...");
             // Use the default state already set up (including initialData overrides)
             // Ensure the data being inserted reflects any initialData provided (e.g., from char creation)
-            const dataToInsert = { ...playerState }; // Start with current state (which includes initialData)
+            // Use specific initialData fields if provided for new player creation
+            const firstName = initialData.playerFirstName || playerState.name; // Use provided first name or default
+            const lastName = initialData.playerLastName || playerState.surname; // Use provided last name or default
+            const startingTool = initialData.startingTool; // Get starting tool
+
+            console.log(` -> Creating new player with Name: ${firstName}, Surname: ${lastName}, Starting Tool: ${startingTool}`);
 
             const insertResult = await run( // Use imported run
-                `INSERT INTO Player (name, surname, gender, title, current_tile_x, current_tile_y, hunger, thirst, health, household_id, current_mount_id)
+                `INSERT INTO Player (name, surname, gender, title_id, current_tile_x, current_tile_y, hunger, thirst, health, household_id, current_mount_id)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
                 [
-                    dataToInsert.name, dataToInsert.surname, dataToInsert.gender, dataToInsert.title,
-                    dataToInsert.x, dataToInsert.y, dataToInsert.hunger, dataToInsert.thirst, dataToInsert.health,
-                    dataToInsert.householdId, // This might be null initially
-                    dataToInsert.currentMountId // Save mount ID
+                    firstName, lastName, // Use separate first/last names
+                    playerState.gender, playerState.title_id,
+                    playerState.x, playerState.y, playerState.hunger, playerState.thirst, playerState.health,
+                    playerState.householdId, // This might be null initially
+                    playerState.currentMountId
                 ]
             );
 
             if (insertResult.lastID) {
                 playerState.id = insertResult.lastID;
-                console.log(`DEBUG: New player created with ID: ${playerState.id}. Attempting to save initial skills.`); // DEBUG
+                console.log(`DEBUG: New player created with ID: ${playerState.id}. Name: ${firstName} ${lastName}.`);
+                // Update in-memory state with the actual names used
+                playerState.name = firstName;
+                playerState.surname = lastName;
+
                 // Now save the initial skills for the new player
-                await saveSkillsToDb(playerState.id, playerState.skills); // Pass only needed args
+                await saveSkillsToDb(playerState.id, playerState.skills);
+
+                // Add starting tool to inventory
+                if (startingTool) {
+                    console.log(`Adding starting tool '${startingTool}' to player ${playerState.id}'s inventory.`);
+                    try {
+                        const added = await addItem('Player', playerState.id, startingTool, 1);
+                        if (!added) {
+                            console.error(`Failed to add starting tool ${startingTool} to inventory for player ${playerState.id}.`);
+                        }
+                    } catch (invError) {
+                        console.error(`Error adding starting tool ${startingTool} to inventory:`, invError);
+                    }
+                }
             } else {
                 console.error("Failed to insert new player into database.");
                 // Proceed with default in-memory state?
@@ -199,6 +231,18 @@ function getSkill(skillName) {
     return playerState.skills[skillName] || { level: 0, xp: 0 }; // Return default if skill not present
 }
 
+/**
+ * Gets the full definition object for the player's current title.
+ * @returns {object | undefined} The title definition from titlesData.js or undefined.
+ */
+function getPlayerTitleDetails() {
+    if (!isInitialized) {
+        console.warn("Player Engine not initialized.");
+        return undefined;
+    }
+    const titleId = playerState.title_id;
+    return getTitleDefinition(titleId);
+}
 
 // --- Modifiers ---
 
@@ -254,7 +298,8 @@ async function updatePlayerAttributes(updates) {
                      case 'name':
                      case 'surname':
                      case 'gender':
-                     case 'title':
+                     // case 'title': // Removed deprecated field
+                     case 'title_id': // Add title_id mapping
                      case 'hunger':
                      case 'thirst':
                      case 'health':
@@ -435,7 +480,7 @@ async function saveSkillsToDb(playerId, skillsObject) {
  */
 function _resetState() {
      playerState = { // Reset to initial structure, not necessarily defaults
-        id: null, name: "DefaultReset", surname: "", gender: "unknown", title: "",
+        id: null, name: "DefaultReset", surname: "", gender: "unknown", title_id: "commoner", // Use title_id
         x: DEFAULT_START_X, y: DEFAULT_START_Y,
         hunger: STARTING_HUNGER, thirst: STARTING_THIRST, health: STARTING_HEALTH,
         skills: {}, inventory: {}, householdId: null, currentMountId: null,
@@ -481,6 +526,7 @@ export {
     getPlayerState,
     getPlayerAttribute,
     getSkill,
+    getPlayerTitleDetails, // Export new function
     updatePlayerAttributes,
     modifyNeed,
     addSkillXP,

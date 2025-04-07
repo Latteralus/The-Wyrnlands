@@ -43,8 +43,11 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 - NPCs have names, ages, skills, households
 - Shared household inventory and funds
 - Schedules for work, rest, shopping
-- Local reputation affects job offers and interactions
-- Emigration/immigration based on housing/jobs
+- Local reputation affects job offers and interactions (Future)
+- Emigration/immigration based on housing/jobs (Future)
+- NPCs follow basic schedules (sleep, work) based on time.
+- NPCs manage basic needs (hunger, thirst) via survival engine.
+- NPCs have assigned social titles (see Social Systems).
 
 ### 5. Construction System
 - All buildings have:
@@ -71,8 +74,9 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
   - Work for wages (business gets output)
   - Gather independently (player keeps materials)
   - Level up appropriate skills for faster production (higher skill = faster actions)
-- Wage tied to skill level
-- Output scales faster than wage
+- Wage calculation considers skill level (via `skillEngine`).
+- Output calculation considers skill level (via `skillEngine`).
+- Output scales faster than wage (implemented in `skillEngine.calculateSkillModifiers`).
 - Businesses (Owned by NPCs or Players):
   - Have their own bank account
   - Pay wages, taxes, buy supplies
@@ -89,6 +93,18 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 - Visible construction activity
 - Workers build, NPCs shop, economy is alive.
 - New buildings affect travel and appearance
+
+### 8. Social Systems (Post-MVP Phase 1 WIP)
+- **Titles & Nobility:**
+    - Characters (Player & NPCs) hold social titles (e.g., Commoner, Freeman, Knight) defined in `titlesData.js`.
+    - Title stored in `Player`/`NPCs` table (`title_id`).
+    - Player's title displayed in UI.
+    - Title effects (privileges, requirements) are planned for future implementation.
+- **Reputation:** (Future)
+    - Local and global reputation tracking.
+    - Affects interactions, prices, job offers.
+- **Tithing/Rank Up:** (Future)
+    - System for advancing titles.
 
 ---
 
@@ -127,31 +143,50 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 
 ## 📊 Development Roadmap (Phased)
 
-### MVP
-- Map/tile system
-- Player movement & click actions
-- SQLite schema
-- Save/load system
-- Hunger, thirst, fatigue, and tool degradation
-- Working construction simulation with visible stages
+### UI Flow / Main Menu (Complete)
+- HTML structure for different screens (Homepage, New Game, Load Game, Settings, Game) in `index.html`.
+- Basic screen navigation logic in `main.js`.
+- "New Game" screen with First/Last Name, Starting Tool selection, and Randomize Name button.
+- Player creation logic updated (`playerEngine.js`) to use new game options.
+- Starting tool added to player inventory (`inventoryUtils.js`, `playerEngine.js`).
+- Basic "Load Game" file selection and database import logic (`main.js`, `database.js`).
 
-### Phase 2
-- Interactable buildings with contextual options
-- Mount system
-- Labor as build resource
-- Economic simulation (supply chains)
-- Property tax & plot ownership
+### MVP (Complete)
+- Map/tile system (`mapEngine`)
+- Player movement & click actions (`movementEngine`)
+- SQLite schema (`schema.sql`, `database.js`)
+- Save/load system (`saveLoadManager`, FileSaver.js)
+- Hunger, thirst, fatigue (`playerEngine`, `survivalEngine`)
+- Tool degradation (Future)
+- Working construction simulation with visible stages (`constructionEngine`, `buildingEngine`)
 
-### Phase 3
-- NPC movement, job simulation, shops
-- Expanded skills and HUD
-- Reputation system
-- Roadbuilding
+### Phase 2 (Mostly Complete)
+- Interactable buildings with contextual options (`buildingEngine`, `uiManager`)
+- Mount system (`mountData.js`, `playerEngine` integration)
+- Labor as build resource (`laborUtils`, `constructionEngine` integration - WIP)
+- Economic simulation (basic wages/output in `jobEngine`, `economyUtils`, `skillEngine`)
+- Property tax & plot ownership (`taxEngine` - basic structure)
 
-### Phase 4
+### Phase 3 (In Progress)
+- NPC movement (`movementEngine` refactored, basic `npcEngine` integration)
+- NPC job simulation (`npcEngine` schedule, `jobEngine` integration)
+- NPC Shops (Future)
+- Expanded skills and HUD (Basic title display added)
+- Reputation system (See Post-MVP Phase 1)
+- Roadbuilding (Future)
+
+### Phase 4 (Future)
 - Dynamic events (festivals, disasters)
 - Family trees, generational data
 - Modding system via JSON
+
+### Post-MVP Phase 1 (In Progress)
+- Title and nobility system (Basic data, storage, display implemented)
+- Tithing system for rank upgrades (Future)
+- Implement local and global reputation effects (Future)
+- Unlock title-based privileges (Future)
+
+*(See `Roadmap.md` for full Post-MVP plan)*
 
 ---
 

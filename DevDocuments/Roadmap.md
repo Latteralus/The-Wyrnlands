@@ -10,7 +10,7 @@ The Wyrnlands is a medieval life-simulation RPG built for the browser using **Ph
 ## 🧭 Post-MVP Roadmap
 
 ### 🔹 Phase 1: Social Systems & Reputation
-- Introduce title and nobility system (Freeman, Knight, Baron, etc.)
+- [WIP] Introduce title and nobility system (Freeman, Knight, Baron, etc.) - *Basic data, storage, and display implemented.*
 - Add tithing system for rank upgrades
 - Implement local and global reputation effects
 - Unlock title-based privileges (e.g., multiple business ownership, court access)

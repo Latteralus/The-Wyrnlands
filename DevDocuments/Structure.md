@@ -69,6 +69,7 @@ Contains all the JavaScript source code for the game logic.
     - `equipmentData.js` (Defines available armor, clothing, etc.)
     - `toolsData.js` (Defines available tools)
     - `resourceData.js` (Defines raw resources and intermediate goods)
+    - `titlesData.js` (Defines social titles and nobility)
 
 ## Assets (`/assets`)
 

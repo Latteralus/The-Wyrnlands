@@ -1,8 +1,11 @@
 // tests/unit/data/database.test.js
 // Unit test for database initialization using Vitest.
 
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { initializeDatabase, all, getRawDb, isDbInitialized } from '../../../src/data/database.js'; // Adjust path if needed
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest'; // Added vi
+import initSqlJs from 'sql.js'; // Import sql.js
+import fs from 'fs'; // Import fs
+import path from 'path'; // Import path
+import { initializeDatabase, all, getRawDb, isDbInitialized } from '../../../src/data/database.js';
 
 describe('Database Module', () => {
     let dbInstance;
@@ -10,20 +13,35 @@ describe('Database Module', () => {
     // Initialize the database once before all tests in this suite
     beforeAll(async () => {
         try {
-            // Ensure clean state if tests run multiple times in watch mode
-            if (isDbInitialized) {
-                console.warn("Database was already initialized before test suite. Attempting re-initialization.");
-                // In a real scenario, might need more robust cleanup/reset logic
+            // Manually initialize sql.js for the test environment
+            // This simulates what happens when sql-wasm.js is loaded in the browser
+            // Ensure the wasm file path is correct relative to the node_modules directory
+            const SQL = await initSqlJs({ locateFile: file => `node_modules/sql.js/dist/${file}` });
+            // Make initSqlJs globally available ONLY for the database initialization call
+            // We use vi.stubGlobal for temporary assignment
+            vi.stubGlobal('initSqlJs', () => Promise.resolve(SQL));
+
+            // Ensure schema file exists (Vitest runs from project root)
+            const schemaPath = path.resolve(__dirname, '../../../src/data/schema.sql');
+            if (!fs.existsSync(schemaPath)) {
+                throw new Error(`Schema file not found at ${schemaPath}`);
             }
+
+            // Initialize the database using the actual implementation
             dbInstance = await initializeDatabase();
-            expect(dbInstance).toBeDefined(); // Basic check that initialization returned something
+            expect(dbInstance).toBeDefined();
             console.log("Database initialized successfully for test suite.");
+
+            // Clean up the global stub after initialization
+            vi.unstubAllGlobals();
+
         } catch (error) {
             console.error("FATAL: Database initialization failed in beforeAll:", error);
-            // Throw error to prevent tests from running with uninitialized DB
+            // Clean up stub even if init fails
+            vi.unstubAllGlobals();
             throw new Error(`Database initialization failed: ${error.message}`);
         }
-    });
+    }, 30000); // Increase timeout for wasm loading if needed
 
     // Optional: Close DB after tests if needed (sql.js in-memory usually doesn't require explicit close unless reloading)
     // afterAll(() => {

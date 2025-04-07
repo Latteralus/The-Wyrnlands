@@ -1,164 +1,138 @@
 // tests/unit/engines/survivalEngine.test.js
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// --- Hoisted Mocks ---
-const { mockPlayerEngine, mockTimeEngine, mockUiManager } = vi.hoisted(() => {
-    return {
-        mockPlayerEngine: {
-            modifyNeed: vi.fn(),
-            getPlayerAttribute: vi.fn(),
-            // updatePlayerAttributes: vi.fn(), // Not strictly needed for these tests yet
-        },
-        mockTimeEngine: {
-            registerDailyCallback: vi.fn(),
-        },
-        mockUiManager: {
-            showGameOver: vi.fn(),
-        }
-    };
-});
+// No direct dependencies to mock for the core logic,
+// but we might mock console or UI functions if testing death trigger side effects (which were removed).
 
-// --- Mock Modules ---
-vi.mock('@/engines/playerEngine.js', () => mockPlayerEngine);
-vi.mock('@/engines/timeEngine.js', () => mockTimeEngine);
-vi.mock('@/managers/uiManager.js', () => mockUiManager);
+// Import the functions to test
+import {
+    initializeSurvivalEngine,
+    applySurvivalEffects
+    // Constants are internal
+} from '../../../src/engines/survivalEngine.js';
 
-// --- Import Subject ---
-import { initializeSurvivalEngine, applyDailySurvivalDecay } from '@/engines/survivalEngine.js';
-
-// --- Test Suite ---
 describe('Survival Engine', () => {
 
     beforeEach(() => {
-        vi.clearAllMocks();
-        // Default mock implementations
-        mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-            if (attr === 'hunger') return 50;
-            if (attr === 'thirst') return 50;
-            if (attr === 'health') return 100;
-            return undefined;
+        // Initialize engine before each test (currently does very little)
+        initializeSurvivalEngine();
+    });
+
+    describe('applySurvivalEffects', () => {
+        it('should apply normal daily decay to hunger and thirst', () => {
+            const entityState = { id: 1, hunger: 100, thirst: 100, health: 100 };
+            const result = applySurvivalEffects(entityState);
+
+            // Check state modification
+            expect(entityState.hunger).toBeCloseTo(90); // 100 - 10
+            expect(entityState.thirst).toBeCloseTo(85); // 100 - 15
+            expect(entityState.health).toBe(100); // No health damage
+
+            // Check return value
+            expect(result.needsChanged).toBe(true);
+            expect(result.healthChanged).toBe(false);
+            expect(result.healthDamage).toBe(0);
+            expect(result.isDead).toBe(false);
+        });
+
+        it('should clamp hunger and thirst at 0', () => {
+            const entityState = { id: 1, hunger: 5, thirst: 10, health: 100 };
+            applySurvivalEffects(entityState);
+            expect(entityState.hunger).toBe(0); // 5 - 10 clamped
+            expect(entityState.thirst).toBe(0); // 10 - 15 clamped
+        });
+
+        it('should apply health damage if hunger is zero', () => {
+            const entityState = { id: 1, hunger: 0, thirst: 50, health: 80 };
+            const result = applySurvivalEffects(entityState);
+
+            expect(entityState.hunger).toBe(0); // 0 - 10 clamped
+            expect(entityState.thirst).toBeCloseTo(35); // 50 - 15
+            expect(entityState.health).toBeCloseTo(75); // 80 - 5
+
+            expect(result.needsChanged).toBe(true); // Thirst changed
+            expect(result.healthChanged).toBe(true);
+            expect(result.healthDamage).toBe(5); // HEALTH_DAMAGE_PER_DAY
+            expect(result.isDead).toBe(false);
+        });
+
+        it('should apply health damage if thirst is zero', () => {
+            const entityState = { id: 1, hunger: 50, thirst: 0, health: 80 };
+            const result = applySurvivalEffects(entityState);
+
+            expect(entityState.hunger).toBeCloseTo(40); // 50 - 10
+            expect(entityState.thirst).toBe(0); // 0 - 15 clamped
+            expect(entityState.health).toBeCloseTo(75); // 80 - 5
+
+            expect(result.needsChanged).toBe(true); // Hunger changed
+            expect(result.healthChanged).toBe(true);
+            expect(result.healthDamage).toBe(5);
+            expect(result.isDead).toBe(false);
+        });
+
+        it('should apply health damage only once if both hunger and thirst are zero', () => {
+            const entityState = { id: 1, hunger: 0, thirst: 0, health: 80 };
+            const result = applySurvivalEffects(entityState);
+
+            expect(entityState.hunger).toBe(0);
+            expect(entityState.thirst).toBe(0);
+            expect(entityState.health).toBeCloseTo(75); // 80 - 5 (only once)
+
+            expect(result.needsChanged).toBe(false); // Needs were already 0
+            expect(result.healthChanged).toBe(true);
+            expect(result.healthDamage).toBe(5);
+            expect(result.isDead).toBe(false);
+        });
+
+        it('should clamp health at 0', () => {
+            const entityState = { id: 1, hunger: 0, thirst: 50, health: 3 }; // Low health
+            applySurvivalEffects(entityState);
+            expect(entityState.health).toBe(0); // 3 - 5 clamped
+        });
+
+        it('should return isDead true if health reaches zero', () => {
+            const entityState = { id: 1, hunger: 0, thirst: 50, health: 5 }; // Health will reach 0
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {}); // Suppress death log
+            const result = applySurvivalEffects(entityState);
+
+            expect(entityState.health).toBe(0);
+            expect(result.isDead).toBe(true);
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('has died'));
+            errorSpy.mockRestore();
+        });
+
+         it('should return isDead true if health starts at zero', () => {
+            const entityState = { id: 1, hunger: 50, thirst: 50, health: 0 };
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const result = applySurvivalEffects(entityState);
+
+            expect(entityState.health).toBe(0); // Stays 0
+            expect(result.isDead).toBe(true); // Already dead
+            // Death message might not log again if health didn't change *this tick* to <= 0
+            // Let's test if health damage occurs first
+             const entityState2 = { id: 2, hunger: 0, thirst: 0, health: 0 };
+             const result2 = applySurvivalEffects(entityState2);
+             expect(entityState2.health).toBe(0); // Damage applied, clamped
+             expect(result2.isDead).toBe(true);
+             expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('has died')); // Should log death
+
+            errorSpy.mockRestore();
+        });
+
+        it('should handle invalid entityState input gracefully', () => {
+            const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+            const result1 = applySurvivalEffects(null);
+            const result2 = applySurvivalEffects({});
+            const result3 = applySurvivalEffects({ hunger: 50, thirst: 'abc', health: 50 });
+
+            expect(result1).toEqual({ needsChanged: false, healthChanged: false, healthDamage: 0, isDead: false });
+            expect(result2).toEqual({ needsChanged: false, healthChanged: false, healthDamage: 0, isDead: false });
+            expect(result3).toEqual({ needsChanged: false, healthChanged: false, healthDamage: 0, isDead: false });
+            expect(errorSpy).toHaveBeenCalledTimes(3);
+            // Adjust assertion to check the first argument (the message string)
+            expect(errorSpy).toHaveBeenCalledWith(expect.stringContaining('Invalid entityState'), expect.anything());
+            errorSpy.mockRestore();
         });
     });
 
-    afterEach(() => {
-        vi.restoreAllMocks();
-    });
-
-    // --- Initialization Tests ---
-    describe('initializeSurvivalEngine', () => {
-        it('should register applyDailySurvivalDecay with timeEngine', () => {
-            initializeSurvivalEngine();
-            expect(mockTimeEngine.registerDailyCallback).toHaveBeenCalledOnce();
-            expect(mockTimeEngine.registerDailyCallback).toHaveBeenCalledWith(applyDailySurvivalDecay);
-        });
-    });
-
-    // --- Daily Decay Tests ---
-    describe('applyDailySurvivalDecay', () => {
-        it('should call modifyNeed for hunger and thirst with correct decay values', async () => {
-            await applyDailySurvivalDecay();
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('hunger', -10.0); // DAILY_HUNGER_DECAY
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('thirst', -15.0); // DAILY_THIRST_DECAY
-        });
-
-        it('should apply health damage if hunger is zero or below', async () => {
-            mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-                if (attr === 'hunger') return 0; // Hunger depleted
-                if (attr === 'thirst') return 50;
-                if (attr === 'health') return 100;
-                return undefined;
-            });
-            await applyDailySurvivalDecay();
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('health', -5.0); // HEALTH_DAMAGE_PER_DAY
-        });
-
-        it('should apply health damage if thirst is zero or below', async () => {
-            mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-                if (attr === 'hunger') return 50;
-                if (attr === 'thirst') return 0; // Thirst depleted
-                if (attr === 'health') return 100;
-                return undefined;
-            });
-            await applyDailySurvivalDecay();
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('health', -5.0); // HEALTH_DAMAGE_PER_DAY
-        });
-
-         it('should apply health damage only once if both hunger and thirst are zero', async () => {
-            mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-                if (attr === 'hunger') return 0;
-                if (attr === 'thirst') return 0;
-                if (attr === 'health') return 100;
-                return undefined;
-            });
-            await applyDailySurvivalDecay();
-            // modifyNeed for health should only be called once with -5.0
-            const healthCalls = mockPlayerEngine.modifyNeed.mock.calls.filter(call => call[0] === 'health');
-            expect(healthCalls.length).toBe(1);
-            expect(healthCalls[0][1]).toBe(-5.0);
-        });
-
-        it('should NOT apply health damage if hunger and thirst are above zero', async () => {
-            // Default mock implementation already has needs > 0
-            await applyDailySurvivalDecay();
-            expect(mockPlayerEngine.modifyNeed).not.toHaveBeenCalledWith('health', expect.any(Number));
-        });
-
-        it('should trigger death state if health reaches zero or below after damage', async () => {
-            mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-                if (attr === 'hunger') return 0; // Trigger health damage
-                if (attr === 'thirst') return 50;
-                if (attr === 'health') return 5; // Health is low before damage
-                return undefined;
-            });
-             // Mock modifyNeed for health to simulate the health dropping to 0
-             const originalModifyNeed = mockPlayerEngine.modifyNeed;
-             mockPlayerEngine.modifyNeed = vi.fn((need, amount) => {
-                 if (need === 'health') {
-                     // Simulate health check *after* modification
-                     mockPlayerEngine.getPlayerAttribute.mockImplementationOnce((attr) => {
-                         if (attr === 'health') return 0; // Health is now 0
-                         return 50; // Other needs
-                     });
-                 }
-                 // Call original mock logic if needed, or just track calls
-                 originalModifyNeed(need, amount);
-             });
-
-
-            await applyDailySurvivalDecay();
-
-            // Restore original mock after test if necessary (though beforeEach handles it)
-            // mockPlayerEngine.modifyNeed = originalModifyNeed;
-
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('health', -5.0);
-            expect(mockUiManager.showGameOver).toHaveBeenCalledOnce();
-             expect(mockUiManager.showGameOver).toHaveBeenCalledWith(expect.any(String)); // Check if called with a message
-        });
-
-        it('should NOT trigger death state if health is above zero after damage', async () => {
-            mockPlayerEngine.getPlayerAttribute.mockImplementation((attr) => {
-                if (attr === 'hunger') return 0; // Trigger health damage
-                if (attr === 'thirst') return 50;
-                if (attr === 'health') return 10; // Health is sufficient before damage
-                return undefined;
-            });
-             // Mock modifyNeed for health to simulate health dropping but not to zero
-             const originalModifyNeed = mockPlayerEngine.modifyNeed;
-             mockPlayerEngine.modifyNeed = vi.fn((need, amount) => {
-                 if (need === 'health') {
-                     // Simulate health check *after* modification
-                     mockPlayerEngine.getPlayerAttribute.mockImplementationOnce((attr) => {
-                         if (attr === 'health') return 5; // Health is now 5
-                         return 50; // Other needs
-                     });
-                 }
-                 originalModifyNeed(need, amount);
-             });
-
-            await applyDailySurvivalDecay();
-
-            expect(mockPlayerEngine.modifyNeed).toHaveBeenCalledWith('health', -5.0);
-            expect(mockUiManager.showGameOver).not.toHaveBeenCalled();
-        });
-    });
 });

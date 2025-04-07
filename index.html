@@ -6,37 +6,128 @@
     <title>The Wyrnlands</title>
     <link rel="stylesheet" href="css/style.css">
     <style>
-        body { margin: 0; background-color: #000; }
+        body { margin: 0; background-color: #222; color: #eee; font-family: sans-serif; }
         canvas { display: block; margin: auto; } /* Center canvas */
+        .screen { display: none; padding: 20px; } /* Hide screens by default */
+        .screen.active { display: block; } /* Show active screen */
+        button { padding: 10px 15px; margin: 5px; font-size: 1em; cursor: pointer; }
+        label { display: inline-block; width: 100px; margin-bottom: 10px; }
+        input[type="text"], select { padding: 5px; margin-bottom: 10px; font-size: 1em; }
+        #game-container { position: relative; } /* Needed for UI overlay */
+        #ui-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 10px;
+            box-sizing: border-box;
+            background-color: rgba(0, 0, 0, 0.5);
+            color: white;
+            pointer-events: none; /* Allow clicks to pass through to canvas */
+            z-index: 10; /* Ensure UI is above canvas */
+        }
+        #ui-overlay > div { margin-bottom: 5px; }
+        .status-bar-container { display: flex; align-items: center; }
+        .status-bar { width: 100px; height: 10px; background-color: #555; border: 1px solid #888; margin-left: 5px; }
+        .status-bar-fill { height: 100%; background-color: green; width: 100%; }
+        #hunger-bar-fill { background-color: orange; }
+        #thirst-bar-fill { background-color: cyan; }
+        #interaction-menu {
+            position: absolute; /* Position relative to game container or screen */
+            background-color: rgba(50, 50, 50, 0.9);
+            border: 1px solid #aaa;
+            padding: 10px;
+            display: none; /* Hidden by default */
+            z-index: 20;
+            pointer-events: auto; /* Allow clicks on menu */
+        }
+        #interaction-menu button { display: block; margin: 5px 0; width: 100%; }
     </style>
 </head>
 <body>
-    <div id="ui-overlay">
-        <div class="status-bar-container">
-            <span>Hunger:</span>
-            <div class="status-bar" id="hunger-bar-outer">
-                <div class="status-bar-fill" id="hunger-bar-fill"></div>
-            </div>
-        </div>
-        <div class="status-bar-container">
-            <span>Thirst:</span>
-            <div class="status-bar" id="thirst-bar-outer">
-                <div class="status-bar-fill" id="thirst-bar-fill"></div>
-            </div>
-        </div>
-        <div id="time-display-container">
-            <span>Time:</span> <span id="time-display">Day 1, 07:00:00</span>
-        </div>
-        <div id="selected-tile-info-container">
-            <span>Selected:</span> <span id="selected-tile-info">None</span>
-        </div>
-        <!-- Add other UI elements here -->
-        <div id="interaction-menu" class="interaction-menu-container">
-            <!-- Buttons will be added here dynamically by uiManager -->
-        </div>
+
+    <!-- Homepage Screen -->
+    <div id="homepage-screen" class="screen active">
+        <h1>The Wyrnlands</h1>
+        <button id="new-game-button">New Game</button>
+        <button id="load-game-button">Load Game</button>
+        <button id="settings-button">Settings</button>
+        <button id="continue-game-button" style="display: none;">Continue Game</button> <!-- Hidden initially -->
     </div>
 
-    <div id="game-container"></div>
+    <!-- New Game Screen -->
+    <div id="new-game-screen" class="screen">
+        <h2>New Game Setup</h2>
+        <div>
+            <label for="player-first-name">First Name:</label>
+            <input type="text" id="player-first-name" value=""><br> <!-- Removed default value -->
+        </div>
+        <div>
+            <label for="player-last-name">Last Name:</label>
+            <input type="text" id="player-last-name" value=""><br>
+        </div>
+        <button id="randomize-name-button">Randomize Name</button> <!-- Added button -->
+        <br><br>
+        <div>
+            <label for="starting-tool">Starting Tool:</label>
+            <select id="starting-tool">
+                <option value="stone_axe">Stone Axe</option>
+                <option value="stone_pickaxe">Stone Pickaxe</option>
+                <option value="wooden_hoe">Wooden Hoe</option>
+            </select><br>
+        </div>
+        <br>
+        <button id="start-new-game-confirm-button">Start Game</button>
+        <button class="back-button">Back to Menu</button>
+    </div>
+
+    <!-- Load Game Screen -->
+    <div id="load-game-screen" class="screen">
+        <h2>Load Game</h2>
+        <p>Select a save file to load:</p>
+        <input type="file" id="load-file-input" accept=".sqlite">
+        <p id="load-status"></p>
+        <button class="back-button">Back to Menu</button>
+    </div>
+
+    <!-- Settings Screen -->
+    <div id="settings-screen" class="screen">
+        <h2>Settings</h2>
+        <p>Game settings will go here (e.g., volume, graphics).</p>
+        <button class="back-button">Back to Menu</button>
+    </div>
+
+    <!-- Game Screen (Contains Phaser Canvas and UI Overlay) -->
+    <div id="game-screen" class="screen">
+        <div id="ui-overlay">
+            <div class="status-bar-container">
+                <span>Hunger:</span>
+                <div class="status-bar" id="hunger-bar-outer">
+                    <div class="status-bar-fill" id="hunger-bar-fill"></div>
+                </div>
+            </div>
+            <div class="status-bar-container">
+                <span>Thirst:</span>
+                <div class="status-bar" id="thirst-bar-outer">
+                    <div class="status-bar-fill" id="thirst-bar-fill"></div>
+                </div>
+            </div>
+            <div id="player-title-container">
+                <span>Title:</span> <span id="player-title-display">Commoner</span>
+            </div>
+            <div id="time-display-container">
+                <span>Time:</span> <span id="time-display">Day 1, 07:00:00</span>
+            </div>
+            <div id="selected-tile-info-container">
+                <span>Selected:</span> <span id="selected-tile-info">None</span>
+            </div>
+            <!-- Interaction Menu Container -->
+            <div id="interaction-menu">
+                <!-- Buttons will be added here dynamically by uiManager -->
+            </div>
+        </div>
+        <div id="game-container"></div> <!-- Phaser canvas will be injected here -->
+    </div>
 
     <!-- External Libraries -->
     <script src="lib/phaser.min.js"></script>

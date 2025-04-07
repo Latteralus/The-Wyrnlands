@@ -410,6 +410,10 @@ async function updateTileProperties(x, y, properties) {
          water: 0x1E90FF, // DodgerBlue
          forest: 0x006400, // DarkGreen
          rock: 0x808080,  // Gray
+         road: 0x444444,  // Dark Gray for roads
+         building: 0x666666, // Medium Gray for buildings
+         tree: 0x004d00,  // Darker green for trees
+         bush: 0x3cb371,  // MediumSeaGreen for bushes
          default: 0xAAAAAA, // Light Gray for unknown types
      };
      const overlayColors = {
@@ -425,28 +429,57 @@ async function updateTileProperties(x, y, properties) {
                  const tileY = y * tileDrawHeight;
  
                  // Base tile color based on type
-                 const color = colors[tile.type] || colors.default;
-                 tileGraphicsLayer.fillStyle(color, 1);
+                 const baseColor = colors[tile.type] || colors.default;
+                 tileGraphicsLayer.fillStyle(baseColor, 1);
                  tileGraphicsLayer.fillRect(tileX, tileY, tileDrawWidth, tileDrawHeight);
+ 
+                 // --- Draw Placeholders ---
+                 const placeholderSize = tileDrawWidth / 4; // Size for flora circles
+ 
+                 // Flora: Trees on 'forest' tiles
+                 if (tile.type === 'forest') {
+                     tileGraphicsLayer.fillStyle(colors.tree, 1);
+                     // Draw 2-3 "trees" randomly within the tile
+                     for (let i = 0; i < Phaser.Math.Between(2, 3); i++) {
+                         const treeX = tileX + Phaser.Math.Between(placeholderSize, tileDrawWidth - placeholderSize);
+                         const treeY = tileY + Phaser.Math.Between(placeholderSize, tileDrawHeight - placeholderSize);
+                         tileGraphicsLayer.fillCircle(treeX, treeY, placeholderSize);
+                     }
+                 }
+                 // Flora: Bushes occasionally on 'grass' tiles
+                 else if (tile.type === 'grass' && Phaser.Math.FloatBetween(0, 1) < 0.1) { // 10% chance
+                     tileGraphicsLayer.fillStyle(colors.bush, 1);
+                     const bushX = tileX + Phaser.Math.Between(placeholderSize, tileDrawWidth - placeholderSize);
+                     const bushY = tileY + Phaser.Math.Between(placeholderSize, tileDrawHeight - placeholderSize);
+                     tileGraphicsLayer.fillCircle(bushX, bushY, placeholderSize * 0.8); // Slightly smaller bush
+                 }
+ 
+                 // Building Placeholder
+                 if (tile.buildingId !== null) {
+                     tileGraphicsLayer.fillStyle(colors.building, 1);
+                     // Draw a rectangle slightly smaller than the tile
+                     const padding = 2;
+                     tileGraphicsLayer.fillRect(tileX + padding, tileY + padding, tileDrawWidth - padding * 2, tileDrawHeight - padding * 2);
+                 }
+                 // --- End Placeholders ---
+ 
+                 // Grid lines (draw after placeholders)
                  tileGraphicsLayer.lineStyle(1, 0x000000, 0.2); // Add a faint grid line
                  tileGraphicsLayer.strokeRect(tileX, tileY, tileDrawWidth, tileDrawHeight);
  
-                 // Debug overlay for walkable/buildable
-                 // Draw a small indicator, e.g., top-left corner for walkable, top-right for buildable
+                 // --- Debug Overlay ---
                  const indicatorSize = tileDrawWidth / 5;
+                 // Walkable indicator (top-left)
                  if (tile.walkable) {
                      debugOverlayLayer.fillStyle(overlayColors.walkable, 0.6); // Semi-transparent
                      debugOverlayLayer.fillRect(tileX + 1, tileY + 1, indicatorSize, indicatorSize);
                  }
+                 // Buildable indicator (top-right, only if empty)
                  if (tile.buildable && tile.buildingId === null) {
                       debugOverlayLayer.fillStyle(overlayColors.buildable, 0.6); // Semi-transparent
                       debugOverlayLayer.fillRect(tileX + tileDrawWidth - indicatorSize - 1, tileY + 1, indicatorSize, indicatorSize);
-                 } else if (tile.buildingId !== null) {
-                     // Indicate occupied buildable tile (e.g., red X or different color)
-                     debugOverlayLayer.lineStyle(2, 0xFF0000, 0.7); // Red
-                     debugOverlayLayer.lineBetween(tileX + tileDrawWidth - indicatorSize - 1, tileY + 1, tileX + tileDrawWidth - 1, tileY + indicatorSize + 1);
-                     debugOverlayLayer.lineBetween(tileX + tileDrawWidth - 1, tileY + 1, tileX + tileDrawWidth - indicatorSize - 1, tileY + indicatorSize + 1);
                  }
+                 // Removed the red 'X' for occupied tiles as building placeholder is now drawn
              }
          }
      }
@@ -496,13 +529,12 @@ function _resetState() {
 // --- Exports ---
 export {
     initializeMap,
-    getTile, // Note: This still gets from memory after initialization
+    getTile,
     isWalkable,
     isBuildable,
     getMapWidth,
     getMapHeight,
     updateTileProperties,
-    createMapVisuals, // Export the new function
+    createMapVisuals,
     _resetState, // Export for testing only
-    // Potentially export Tile class if needed externally
 };
