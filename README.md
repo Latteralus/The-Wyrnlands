@@ -1,6 +1,6 @@
 🌾 The Wyrnlands — A Deep, Offline Medieval Life Simulation RPG
 
-The Wyrnlands is a modular, text-driven simulation RPG built entirely in-browser using Phaser.js and SQLite. You begin as a commoner in a dynamic medieval world where every citizen works, trades, builds, and ages in real time. Survive, thrive, and climb the social ladder as you buy land, run businesses, build homes, and influence your growing town.
+The Wyrnlands is a modular, text-driven simulation RPG built entirely in-browser using Phaser.js and SQLite. You begin as a commoner in a dynamic medieval world where every citizen works, trades, builds, and ages in real time. Survive, thrive, and climb the social ladder as you buy land, run businesses, build homes, and influence a constantly changing region.
 
 🧱 Fully offline, no server required
 
