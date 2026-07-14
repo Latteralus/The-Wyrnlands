@@ -1,10 +1,11 @@
-import type { Database } from 'sql.js'
-import { gridDistance, type Coordinates } from './grid'
+import { queryRow, queryRows } from '../db/sqlite';
+import { gridDistance, type Coordinates } from './grid';
+import type { Database } from 'sql.js';
 
 export interface Site extends Coordinates {
-  id: string
-  name: string
-  kind: string
+  id: string;
+  name: string;
+  kind: string;
 }
 
 export function createSite(db: Database, site: Site): void {
@@ -14,28 +15,26 @@ export function createSite(db: Database, site: Site): void {
     site.kind,
     site.x,
     site.y,
-  ])
+  ]);
 }
 
 export function getSite(db: Database, id: string): Site | null {
-  const result = db.exec('SELECT id, name, kind, x, y FROM sites WHERE id = ?', [id])
-  if (result.length === 0) return null
-  const [row] = result[0].values
-  return rowToSite(row)
+  const row = queryRow(db, 'SELECT id, name, kind, x, y FROM sites WHERE id = ?', [id]);
+  return row ? rowToSite(row) : null;
 }
 
 export function listSitesByKind(db: Database, kind: string): Site[] {
-  const result = db.exec('SELECT id, name, kind, x, y FROM sites WHERE kind = ? ORDER BY id', [kind])
-  if (result.length === 0) return []
-  return result[0].values.map(rowToSite)
+  return queryRows(db, 'SELECT id, name, kind, x, y FROM sites WHERE kind = ? ORDER BY id', [kind]).map(
+    rowToSite,
+  );
 }
 
 export function distanceBetweenSites(db: Database, aId: string, bId: string): number {
-  const a = getSite(db, aId)
-  const b = getSite(db, bId)
-  if (!a) throw new Error(`Unknown site: "${aId}"`)
-  if (!b) throw new Error(`Unknown site: "${bId}"`)
-  return gridDistance(a, b)
+  const a = getSite(db, aId);
+  const b = getSite(db, bId);
+  if (!a) throw new Error(`Unknown site: "${aId}"`);
+  if (!b) throw new Error(`Unknown site: "${bId}"`);
+  return gridDistance(a, b);
 }
 
 function rowToSite(row: unknown[]): Site {
@@ -45,5 +44,5 @@ function rowToSite(row: unknown[]): Site {
     kind: String(row[2]),
     x: Number(row[3]),
     y: Number(row[4]),
-  }
+  };
 }

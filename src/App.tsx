@@ -1,58 +1,58 @@
-import { useEffect, useRef, useState } from 'react'
-import { createDatabase } from './engine/db/sqlite'
-import { loadSqlJs } from './engine/db/sqlite.browser'
-import { Engine } from './engine/engine'
-import { createUiApi, type UiApi } from './engine/ui-api'
-import type { EngineEvent } from './engine/eventBus'
-import './App.css'
+import { useEffect, useRef, useState } from 'react';
+import { createDatabase } from './engine/db/sqlite';
+import { loadSqlJs } from './engine/db/sqlite.browser';
+import { Engine } from './engine/engine';
+import { createUiApi, type UiApi } from './engine/ui-api';
+import type { EngineEvent } from './engine/eventBus';
+import './App.css';
 
 function App() {
-  const engineRef = useRef<Engine | null>(null)
-  const [uiApi, setUiApi] = useState<UiApi | null>(null)
-  const [tick, setTick] = useState(0)
-  const [worldLog, setWorldLog] = useState<EngineEvent[]>([])
+  const engineRef = useRef<Engine | null>(null);
+  const [uiApi, setUiApi] = useState<UiApi | null>(null);
+  const [tick, setTick] = useState(0);
+  const [worldLog, setWorldLog] = useState<EngineEvent[]>([]);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
 
-    ;(async () => {
-      const SQL = await loadSqlJs()
-      const db = createDatabase(SQL)
-      const engine = Engine.bootstrap(db, { seed: 'wyrnlands-dev' })
+    void (async () => {
+      const SQL = await loadSqlJs();
+      const db = createDatabase(SQL);
+      const engine = Engine.bootstrap(db, { seed: 'wyrnlands-dev' });
       if (cancelled) {
-        engine.dispose()
-        return
+        engine.dispose();
+        return;
       }
-      engineRef.current = engine
-      const api = createUiApi(engine)
-      setUiApi(api)
-      setTick(api.getTick())
-      setWorldLog(api.queryLog('world', 5))
-    })()
+      engineRef.current = engine;
+      const api = createUiApi(engine);
+      setUiApi(api);
+      setTick(api.getTick());
+      setWorldLog(api.queryLog('world', 5));
+    })();
 
     return () => {
-      cancelled = true
-      engineRef.current?.dispose()
-      engineRef.current = null
-    }
-  }, [])
+      cancelled = true;
+      engineRef.current?.dispose();
+      engineRef.current = null;
+    };
+  }, []);
 
   const advance = (count: number) => {
-    if (!uiApi) return
-    uiApi.advanceTicks(count)
-    setTick(uiApi.getTick())
-    setWorldLog(uiApi.queryLog('world', 5))
-  }
+    if (!uiApi) return;
+    uiApi.advanceTicks(count);
+    setTick(uiApi.getTick());
+    setWorldLog(uiApi.queryLog('world', 5));
+  };
 
   if (!uiApi) {
     return (
       <main className="boot-screen">
         <p>Booting the simulation…</p>
       </main>
-    )
+    );
   }
 
-  const calendar = uiApi.getCalendar()
+  const calendar = uiApi.getCalendar();
 
   return (
     <main className="boot-screen">
@@ -86,7 +86,7 @@ function App() {
         ))}
       </ul>
     </main>
-  )
+  );
 }
 
-export default App
+export default App;

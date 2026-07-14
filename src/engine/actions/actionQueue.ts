@@ -1,8 +1,10 @@
-import type { Database } from 'sql.js';
+import { queryRow, queryRows } from '../db/sqlite';
+import { withOptional } from '../optional';
 import type { EventBus } from '../eventBus';
 import type { Rng } from '../rng';
 import type { ActionRegistry } from './registry';
-import type { ActionStatus, QueuedAction } from './types';
+import type { ActionOutcome, ActionStatus, QueuedAction } from './types';
+import type { Database } from 'sql.js';
 
 const COLUMNS =
   'id, actor_id, type, status, queued_at_tick, started_at_tick, ends_at_tick, duration_ticks, progress_ticks, outcome, sequence';
@@ -18,35 +20,33 @@ function rowToAction(row: unknown[]): QueuedAction {
     endsAtTick: row[6] === null ? null : Number(row[6]),
     durationTicks: Number(row[7]),
     progressTicks: Number(row[8]),
-    outcome: row[9] ? JSON.parse(String(row[9])) : null,
+    outcome: typeof row[9] === 'string' ? (JSON.parse(row[9]) as ActionOutcome) : null,
     sequence: Number(row[10]),
   };
 }
 
 function getNextSequence(db: Database, actorId: string): number {
-  const result = db.exec('SELECT COALESCE(MAX(sequence), -1) + 1 FROM actions WHERE actor_id = ?', [
+  const row = queryRow(db, 'SELECT COALESCE(MAX(sequence), -1) + 1 FROM actions WHERE actor_id = ?', [
     actorId,
   ]);
-  return Number(result[0].values[0][0]);
+  return Number(row?.[0]);
 }
 
 function getCurrentAction(db: Database, actorId: string): QueuedAction | null {
-  const result = db.exec(
+  const row = queryRow(
+    db,
     `SELECT ${COLUMNS} FROM actions
      WHERE actor_id = ? AND status IN ('queued', 'in_progress')
      ORDER BY sequence ASC LIMIT 1`,
     [actorId],
   );
-  if (result.length === 0) return null;
-  return rowToAction(result[0].values[0]);
+  return row ? rowToAction(row) : null;
 }
 
 export function listActorActions(db: Database, actorId: string): QueuedAction[] {
-  const result = db.exec(`SELECT ${COLUMNS} FROM actions WHERE actor_id = ? ORDER BY sequence ASC`, [
+  return queryRows(db, `SELECT ${COLUMNS} FROM actions WHERE actor_id = ? ORDER BY sequence ASC`, [
     actorId,
-  ]);
-  if (result.length === 0) return [];
-  return result[0].values.map(rowToAction);
+  ]).map(rowToAction);
 }
 
 export function enqueueAction(
@@ -63,8 +63,8 @@ export function enqueueAction(
      VALUES (?, ?, 'queued', ?, ?, 0, ?)`,
     [actorId, type, currentTick, definition.durationTicks, sequence],
   );
-  const idResult = db.exec('SELECT last_insert_rowid()');
-  return Number(idResult[0].values[0][0]);
+  const row = queryRow(db, 'SELECT last_insert_rowid()');
+  return Number(row?.[0]);
 }
 
 function startAction(db: Database, bus: EventBus, action: QueuedAction, currentTick: number): void {
@@ -101,14 +101,18 @@ function resolveAction(
     JSON.stringify(outcome),
     action.id,
   ]);
-  bus.emit({
-    tick: currentTick,
-    scope: 'personal',
-    actorId: action.actorId,
-    type: outcome.success ? 'action.completed' : 'action.failed',
-    message: outcome.message,
-    data: outcome.data,
-  });
+  bus.emit(
+    withOptional(
+      {
+        tick: currentTick,
+        scope: 'personal' as const,
+        actorId: action.actorId,
+        type: outcome.success ? 'action.completed' : 'action.failed',
+        message: outcome.message,
+      },
+      { data: outcome.data },
+    ),
+  );
 }
 
 // Runs one actor's queue forward by one tick. Chains transitions (a
@@ -144,7 +148,12 @@ export function processActorActions(
 
 // Proportional results on interruption (§4.3): the action is stopped where it
 // stood, its partial progress preserved for the caller to judge.
-export function interruptCurrentAction(db: Database, bus: EventBus, actorId: string, currentTick: number): void {
+export function interruptCurrentAction(
+  db: Database,
+  bus: EventBus,
+  actorId: string,
+  currentTick: number,
+): void {
   const action = getCurrentAction(db, actorId);
   if (!action || action.status !== 'in_progress') return;
 

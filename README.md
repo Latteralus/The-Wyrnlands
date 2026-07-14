@@ -11,10 +11,15 @@ React 18/19 + TypeScript UI, a pure-TypeScript simulation engine (`src/engine/`,
 ```
 npm run dev           # start the Vite dev server
 npm run build          # typecheck + production build
+npm run typecheck       # tsc -b only
+npm run lint            # ESLint (type-aware)
+npm run lint:fix        # ESLint --fix
+npm run format          # Prettier --write
+npm run format:check    # Prettier --check
 npm test               # run engine tests headlessly (Vitest)
 npm run test:watch     # Vitest in watch mode
+npm run validate        # typecheck + lint + format:check + test + build, in order
 npm run sim:headless   # run N ticks of the engine outside the browser (see src/engine/headless-runner.ts)
-npm run lint            # oxlint
 ```
 
 ## Layout

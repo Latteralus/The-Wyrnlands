@@ -1,19 +1,31 @@
-import type { Database } from 'sql.js';
-import { enqueueAction, interruptCurrentAction, listActorActions, processActorActions } from './actions/actionQueue';
+import {
+  enqueueAction,
+  interruptCurrentAction,
+  listActorActions,
+  processActorActions,
+} from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
-import type { ActionDefinition, QueuedAction } from './actions/types';
 import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
 import { applyMigrations } from './db/migrationRunner';
-import { exportDatabase } from './db/sqlite';
+import { exportDatabase, queryRow, queryRows } from './db/sqlite';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
-import { destroyItem, getItem, getProvenanceChain, produceItem, transferItem, type ProduceItemParams } from './inventory/items';
-import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
+import {
+  destroyItem,
+  getItem,
+  getProvenanceChain,
+  produceItem,
+  transferItem,
+  type ProduceItemParams,
+} from './inventory/items';
 import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
 import { attachLogger, queryLog } from './logs/logger';
 import { createRng, hashSeed, type Rng } from './rng';
 import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
 import { travelDurationTicks, type TravelConditions } from './world/grid';
 import { createSite, distanceBetweenSites, getSite, listSitesByKind, type Site } from './world/sites';
+import type { ActionDefinition, QueuedAction } from './actions/types';
+import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
+import type { Database } from 'sql.js';
 
 export interface EngineOptions {
   seed: string;
@@ -45,12 +57,10 @@ export class Engine {
   }
 
   private ensureWorldMeta(seed: string): void {
-    const existing = this.db.exec('SELECT id FROM world_meta WHERE id = 1');
-    if (existing.length > 0 && existing[0].values.length > 0) return;
+    const existing = queryRow(this.db, 'SELECT id FROM world_meta WHERE id = 1');
+    if (existing) return;
 
-    this.db.run('INSERT INTO world_meta (id, tick, rng_seed, schema_version) VALUES (1, 0, ?, 1)', [
-      seed,
-    ]);
+    this.db.run('INSERT INTO world_meta (id, tick, rng_seed, schema_version) VALUES (1, 0, ?, 1)', [seed]);
     this.bus.emit({
       tick: 0,
       scope: 'world',
@@ -60,8 +70,8 @@ export class Engine {
   }
 
   get tick(): number {
-    const result = this.db.exec('SELECT tick FROM world_meta WHERE id = 1');
-    return Number(result[0]?.values[0]?.[0] ?? 0);
+    const row = queryRow(this.db, 'SELECT tick FROM world_meta WHERE id = 1');
+    return Number(row?.[0] ?? 0);
   }
 
   get calendar(): Calendar {
@@ -86,11 +96,11 @@ export class Engine {
   }
 
   private processActiveActions(currentTick: number): void {
-    const result = this.db.exec(
+    const rows = queryRows(
+      this.db,
       "SELECT DISTINCT actor_id FROM actions WHERE status IN ('queued', 'in_progress') ORDER BY actor_id ASC",
     );
-    if (result.length === 0) return;
-    for (const row of result[0].values) {
+    for (const row of rows) {
       processActorActions(this.db, this.bus, this.actions, this.rng, String(row[0]), currentTick);
     }
   }
@@ -143,7 +153,11 @@ export class Engine {
     transferItem(this.db, this.bus, itemId, toContainerId, this.tick, options);
   }
 
-  destroyItem(itemId: string, reason: DestructionReason, options?: { actorId?: string; note?: string }): void {
+  destroyItem(
+    itemId: string,
+    reason: DestructionReason,
+    options?: { actorId?: string; note?: string },
+  ): void {
     destroyItem(this.db, this.bus, itemId, reason, this.tick, options);
   }
 

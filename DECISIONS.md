@@ -4,6 +4,30 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-14 — Dev tooling audit: strict TypeScript, ESLint, Prettier
+
+Not a MASTERPLAN.md module — a tooling/dependency audit of the whole project, per §4.2's "modular and testable" and §19's engine/UI separation rules being worth actually enforcing at the compiler/linter level, not just by convention.
+
+**What was built:**
+- Replaced `oxlint` with **ESLint 9.39.5 + typescript-eslint 8.64.0** (`eslint.config.js`, flat config): `recommendedTypeChecked` (unsafe-type rules, floating promises), `eslint-plugin-react`/`react-hooks`/`react-refresh`, `eslint-plugin-unused-imports` (autofixable dead imports, distinct from unused locals), `eslint-plugin-import-x` + `eslint-import-resolver-typescript` (import ordering/duplicates). oxlint can't do type-aware linting at all, and the ask specifically wanted unsafe-type/floating-promise detection.
+- Added **Prettier 3.9.5** (`.prettierrc.json`, `.prettierignore`) for formatting, scoped to code/config — `*.md` is excluded (see Decisions).
+- Extracted **`tsconfig.base.json`**, shared by `tsconfig.app.json`/`tsconfig.node.json`, carrying `strict`, `forceConsistentCasingInFileNames`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitReturns` (plus the pre-existing `noUnusedLocals`/`noUnusedParameters`).
+- New scripts: `typecheck`, `lint` / `lint:fix`, `format` / `format:check`, `validate` (chains typecheck → lint → format:check → test → build).
+- New shared helper `src/engine/optional.ts` (`withOptional`) and `db/sqlite.ts` gained `queryRow`/`queryRows` — both born directly out of fixing the strict-mode fallout below, not speculative additions.
+
+**Decisions:**
+- **TypeScript stays at 6.0.3, not the newly-released 7.0.2.** typescript-eslint@8.64.0's peer range is `>=4.8.4 <6.1.0`; 6.0.3 is already the latest version inside that range (6.1+ doesn't exist yet as a stable release). Upgrading to 7.x would have silently broken all type-aware linting.
+- **ESLint pinned to the 9.x line (9.39.5), not the newly-released 10.x.** Every plugin in the stack declares `eslint: ... || ^10.0.0` support except `eslint-plugin-react@7.37.5`, which caps at `^9.7`. "Latest compatible," not just "latest."
+- **`eslint-plugin-import-x` needs `eslint-import-resolver-typescript`, not `eslint-import-resolver-node`.** The node resolver produced a wall of "invalid interface loaded as resolver" errors on every `import-x/*` rule — a real resolver/plugin-version mismatch, not a code issue. Swapping resolvers cleared ~80 of the ~81 initial ESLint errors in one change.
+- **`db.exec()` returns `[]`, not `[{columns, values: []}]`, when a SELECT matches zero rows** — confirmed empirically (not documented in sql.js's own types), and it's what made `noUncheckedIndexedAccess` errors so pervasive across every `result[0].values[...]` call site. `queryRow`/`queryRows` centralize that distinction once instead of re-deriving it at ~15 call sites.
+- **`withOptional()` exists because `Partial<Opt>` alone isn't `exactOptionalPropertyTypes`-clean** — it still carries the `| undefined` from `Opt`'s own inferred value types, which is exactly what that flag rejects at a target like `actorId?: string`. The helper's return type explicitly excludes `undefined` from each optional value, matching what the function actually guarantees at runtime. The alternative (widening every optional prop across the codebase to `T | undefined`) would have defeated the flag's purpose everywhere just to satisfy it in a few places.
+- **Prettier excludes `*.md`.** It reformatted `MASTERPLAN.md`'s prose (italics syntax, table padding) on first run — cosmetically harmless, but rewriting the user's authored design doc as a side effect of a code-formatting pass wasn't in scope. Docs keep their own formatting conventions; `format`/`format:check` only touch code and config.
+- **`no-base-to-string` fixes use `typeof` narrowing, not `String()` + a suppression.** `SqlValue` includes `Uint8Array`, which the rule won't assume stringifies sanely — even though our schema never actually stores blobs in those columns. Narrowing with `typeof row[n] === 'string'` before parsing is strictly more correct than the blind `String(row[n])` it replaced, not just quieter.
+
+**Verification:** `npm run validate` (typecheck → lint → format:check → test → build) passes clean; all 33 existing tests still pass unchanged (only type-level fixes, no behavior changes); a real browser smoke test confirmed the dev server still boots after the tsconfig/engine-file changes.
+
+---
+
 ## 2026-07-14 — Item provenance + conservation audit (Stage 0 complete, §7.1/§8.1/§16)
 
 **What was built:**

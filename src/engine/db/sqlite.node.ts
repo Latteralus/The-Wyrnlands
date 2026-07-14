@@ -1,6 +1,6 @@
-import initSqlJs, { type SqlJsStatic } from 'sql.js';
 import { createRequire } from 'node:module';
 import path from 'node:path';
+import initSqlJs, { type SqlJsStatic } from 'sql.js';
 
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 

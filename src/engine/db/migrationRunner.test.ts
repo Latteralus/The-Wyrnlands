@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { createDatabase } from './sqlite';
-import { loadSqlJs } from './sqlite.node';
 import { applyMigrations } from './migrationRunner';
+import { createDatabase, queryRows } from './sqlite';
+import { loadSqlJs } from './sqlite.node';
 
 describe('applyMigrations', () => {
   it('creates the core schema once and is idempotent on re-run', async () => {
@@ -16,8 +16,9 @@ describe('applyMigrations', () => {
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
-    const tables = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name");
-    const tableNames = tables[0].values.map((row) => String(row[0]));
+    const tableNames = queryRows(db, "SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name").map(
+      (row) => String(row[0]),
+    );
     expect(tableNames).toEqual(
       expect.arrayContaining([
         'actions',
