@@ -2,12 +2,16 @@ import type { Database } from 'sql.js';
 import { enqueueAction, interruptCurrentAction, listActorActions, processActorActions } from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
 import type { ActionDefinition, QueuedAction } from './actions/types';
+import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase } from './db/sqlite';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
+import { destroyItem, getItem, getProvenanceChain, produceItem, transferItem, type ProduceItemParams } from './inventory/items';
+import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
+import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
 import { attachLogger, queryLog } from './logs/logger';
 import { createRng, hashSeed, type Rng } from './rng';
-import { deriveCalendar, type Calendar } from './time/clock';
+import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
 import { travelDurationTicks, type TravelConditions } from './world/grid';
 import { createSite, distanceBetweenSites, getSite, listSitesByKind, type Site } from './world/sites';
 
@@ -76,6 +80,9 @@ export class Engine {
     this.processActiveActions(nextTick);
     // Further cadence hooks (needs, market, households, ...) attach here
     // as each module lands — see MASTERPLAN.md §4.2.
+    if (nextTick % MINUTES_PER_DAY === 0) {
+      runConservationAudit(this.db, this.bus, nextTick);
+    }
   }
 
   private processActiveActions(currentTick: number): void {
@@ -126,6 +133,50 @@ export class Engine {
 
   travelDurationBetweenSites(aId: string, bId: string, conditions: TravelConditions): number {
     return travelDurationTicks(this.distanceBetweenSites(aId, bId), conditions);
+  }
+
+  produceItem(params: Omit<ProduceItemParams, 'tick'> & { tick?: number }): void {
+    produceItem(this.db, this.bus, { ...params, tick: params.tick ?? this.tick });
+  }
+
+  transferItem(itemId: string, toContainerId: string, options?: { actorId?: string; note?: string }): void {
+    transferItem(this.db, this.bus, itemId, toContainerId, this.tick, options);
+  }
+
+  destroyItem(itemId: string, reason: DestructionReason, options?: { actorId?: string; note?: string }): void {
+    destroyItem(this.db, this.bus, itemId, reason, this.tick, options);
+  }
+
+  getItem(itemId: string): Item | null {
+    return getItem(this.db, itemId);
+  }
+
+  getProvenanceChain(itemId: string): ProvenanceEvent[] {
+    return getProvenanceChain(this.db, itemId);
+  }
+
+  ensureWallet(ownerId: string): void {
+    ensureWallet(this.db, ownerId);
+  }
+
+  getBalance(ownerId: string): number {
+    return getBalance(this.db, ownerId);
+  }
+
+  faucetCoin(ownerId: string, amount: number, note?: string): void {
+    faucetCoin(this.db, this.bus, ownerId, amount, this.tick, note);
+  }
+
+  sinkCoin(ownerId: string, amount: number, note?: string): void {
+    sinkCoin(this.db, this.bus, ownerId, amount, this.tick, note);
+  }
+
+  transferCoin(fromOwnerId: string, toOwnerId: string, amount: number, note?: string): void {
+    transferCoin(this.db, this.bus, fromOwnerId, toOwnerId, amount, this.tick, note);
+  }
+
+  runConservationAudit(): AuditResult {
+    return runConservationAudit(this.db, this.bus, this.tick);
   }
 
   queryLog(scope: EventScope, limit = 100): EngineEvent[] {

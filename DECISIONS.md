@@ -4,6 +4,24 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-14 — Item provenance + conservation audit (Stage 0 complete, §7.1/§8.1/§16)
+
+**What was built:**
+- Migration `0004_inventory_and_audit`: `items` (single-container rule, status lifecycle), `provenance_events` (one item's full history), `wallets` (one balance per entity), `audits` (a row per audit run), plus four running-total counter columns added to `world_meta` (`goods_created`, `goods_destroyed`, `coin_faucet_total`, `coin_sink_total`).
+- `src/engine/inventory/` — `items.ts` (`produceItem`/`transferItem`/`destroyItem`/`getItem`/`getProvenanceChain`/`countActiveItems`), `wallet.ts` (`faucetCoin`/`sinkCoin`/`transferCoin`/`getBalance`/`sumWalletBalances`), `counters.ts` (the shared running totals both of the above update).
+- `src/engine/audit/conservationAudit.ts` — `runConservationAudit`: compares the counters (what *should* be true) against live `COUNT`/`SUM` queries (what the tables *actually* contain), records a row in `audits`, and emits a `world`-scoped `audit.failed` log event on mismatch.
+- `Engine` runs the audit automatically at every in-game midnight (`tick % MINUTES_PER_DAY === 0`) per §4.2's "nightly (conservation audit)" cadence, and exposes `runConservationAudit()` for manual/test invocation.
+
+**Decisions:**
+- **The audit compares counters against live tables, not "this audit's totals vs. the prior audit's totals."** Counters (`goods_created` etc.) are incremented only inside `produceItem`/`destroyItem`/`faucetCoin`/`sinkCoin` — so as long as all state changes go through those functions, counters and live tables always agree. If something ever bypasses them (a bug, a bad migration, a raw query), the two diverge and the audit catches it same-day, which is the actual point of §16's "drift = bug." `conservationAudit.test.ts` proves this by deliberately deleting an item row and mutating a wallet balance via raw SQL and confirming the audit flags both.
+- **Transfers (`transferItem`, `transferCoin`) don't touch the counters.** Only creation/destruction and faucet/sink change how much exists in total; moving something that already exists between containers/owners is conservation-neutral by construction, matching §8.1 rule 1 ("every transfer transactional and logged" — logged via `provenance_events`/the event bus, not via the conservation counters).
+- **`items.status` has no `'destroyed'` value distinct from `'consumed'`/`'spoiled'`/`'worn_out'`** — §8.1 rule 1 says "spoilage and wear are the only destruction," so those three specific reasons *are* the destruction vocabulary; a generic fourth status would just be an unused escape hatch.
+- **One wallet per entity, no business ledgers yet.** Business ledgers (§9.3) are a Stage 5 concept with far more fields (revenue, wages, equipment upkeep); building that structure now, before companies exist, would be speculative. `wallets.owner_id` will grow to accept business IDs once that module lands.
+
+**Exit-test status (Stage 0, §Stage 0): all five criteria now met** — 10,000 deterministic headless ticks, a scripted actor completing a queued chain including a failed attempt, save→load→resave byte-identical, the conservation audit passing (and, better than the exit test strictly requires, verified to actually *catch* drift), and a seeded item's provenance chain queryable end to end. Stage 1 (React interface shell, §Stage 1) is next.
+
+---
+
 ## 2026-07-14 — Grid-coordinate world model (Stage 0, §5.1)
 
 **What was built:**
