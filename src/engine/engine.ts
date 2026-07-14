@@ -1,4 +1,7 @@
 import type { Database } from 'sql.js';
+import { enqueueAction, interruptCurrentAction, listActorActions, processActorActions } from './actions/actionQueue';
+import { ActionRegistry } from './actions/registry';
+import type { ActionDefinition, QueuedAction } from './actions/types';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase } from './db/sqlite';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
@@ -18,6 +21,7 @@ export interface EngineOptions {
 export class Engine {
   readonly db: Database;
   readonly bus = new EventBus();
+  readonly actions = new ActionRegistry();
   private rng: Rng;
   private detachLogger: () => void;
 
@@ -67,8 +71,39 @@ export class Engine {
   private stepOneTick(): void {
     const nextTick = this.tick + 1;
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
-    // Cadence hooks (needs, actions, market, households, ...) attach here
+    this.processActiveActions(nextTick);
+    // Further cadence hooks (needs, market, households, ...) attach here
     // as each module lands — see MASTERPLAN.md §4.2.
+  }
+
+  private processActiveActions(currentTick: number): void {
+    const result = this.db.exec(
+      "SELECT DISTINCT actor_id FROM actions WHERE status IN ('queued', 'in_progress') ORDER BY actor_id ASC",
+    );
+    if (result.length === 0) return;
+    for (const row of result[0].values) {
+      processActorActions(this.db, this.bus, this.actions, this.rng, String(row[0]), currentTick);
+    }
+  }
+
+  registerActionType(definition: ActionDefinition): void {
+    this.actions.register(definition);
+  }
+
+  createEntity(id: string, name: string): void {
+    this.db.run('INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)', [id, name]);
+  }
+
+  queueAction(actorId: string, type: string): number {
+    return enqueueAction(this.db, this.actions, actorId, type, this.tick);
+  }
+
+  getActorActions(actorId: string): QueuedAction[] {
+    return listActorActions(this.db, actorId);
+  }
+
+  interruptAction(actorId: string): void {
+    interruptCurrentAction(this.db, this.bus, actorId, this.tick);
   }
 
   queryLog(scope: EventScope, limit = 100): EngineEvent[] {

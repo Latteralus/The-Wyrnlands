@@ -4,6 +4,23 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-14 — Timed-action framework (Stage 0, §4.3)
+
+**What was built:**
+- Migration `0002_entities_and_actions`: an `entities` table (id + name only for now — household, portrait, skills, traits, etc. arrive with the modules that need them) and an `actions` table (one actor has at most one `in_progress` row; `queued` rows behind it are that actor's committed chain).
+- `src/engine/actions/` — `types.ts` (`ActionDefinition`, `ActionOutcome`, `QueuedAction`), `registry.ts` (`ActionRegistry`, a type→definition map), `actionQueue.ts` (`enqueueAction`, `processActorActions`, `interruptCurrentAction`, `listActorActions`).
+- `Engine` gained `registerActionType`, `createEntity`, `queueAction`, `getActorActions`, `interruptAction`, and a per-tick `processActiveActions` cadence hook that drives every actor with a pending action forward.
+
+**Decisions:**
+- **Action *definitions* are code (a `resolve: (rng) => ActionOutcome` function in a registry), not DB data**, unlike goods/recipes which §16 wants data-driven. Actions need arbitrary behavior (skill checks, later on); recipes/goods are the actual data-driven surface once the production module lands. Revisit if action definitions grow complex enough to want hot-reloading or modding (§16) before then.
+- **No idle tick between chained actions.** `processActorActions` loops internally so a completion and the next action's start land in the *same* tick call, instead of "resolve this tick, start next tick." An actor with queued work is occupied every tick, matching §4.3 ("occupying the character exclusively") — an idle gap would be a subtle, hard-to-notice inefficiency baked into every job/shift/gather chain in the game.
+- **`interruptCurrentAction` only acts on an `in_progress` action**, not a `queued` one (cancelling something that hasn't started is a different, not-yet-built operation). Progress is stored as elapsed ticks, not a rounded fraction, so exact interruption timing survives a save/reload.
+- **`processActiveActions` orders by `actor_id ASC` explicitly** rather than trusting `SELECT DISTINCT`'s incidental row order — needed since RNG draws happen during resolution, and draw order must be reproducible for the same seed.
+
+**Exit-test progress:** "scripted actor completes a queued action chain including a failed attempt" (Stage 0 exit test) ✅ — `src/engine/actions/actionQueue.test.ts` queues chop→fail→chop for one actor and asserts status, timing, and log output. Still open: grid-coordinate world model, conservation audit, provenance recording.
+
+---
+
 ## 2026-07-14 — Project scaffold (Stage 0, partial)
 
 **What was built:**
