@@ -8,6 +8,8 @@ import { EventBus, type EngineEvent, type EventScope } from './eventBus';
 import { attachLogger, queryLog } from './logs/logger';
 import { createRng, hashSeed, type Rng } from './rng';
 import { deriveCalendar, type Calendar } from './time/clock';
+import { travelDurationTicks, type TravelConditions } from './world/grid';
+import { createSite, distanceBetweenSites, getSite, listSitesByKind, type Site } from './world/sites';
 
 export interface EngineOptions {
   seed: string;
@@ -104,6 +106,26 @@ export class Engine {
 
   interruptAction(actorId: string): void {
     interruptCurrentAction(this.db, this.bus, actorId, this.tick);
+  }
+
+  createSite(site: Site): void {
+    createSite(this.db, site);
+  }
+
+  getSite(id: string): Site | null {
+    return getSite(this.db, id);
+  }
+
+  listSitesByKind(kind: string): Site[] {
+    return listSitesByKind(this.db, kind);
+  }
+
+  distanceBetweenSites(aId: string, bId: string): number {
+    return distanceBetweenSites(this.db, aId, bId);
+  }
+
+  travelDurationBetweenSites(aId: string, bId: string, conditions: TravelConditions): number {
+    return travelDurationTicks(this.distanceBetweenSites(aId, bId), conditions);
   }
 
   queryLog(scope: EventScope, limit = 100): EngineEvent[] {

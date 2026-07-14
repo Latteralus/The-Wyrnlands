@@ -4,6 +4,23 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-14 — Grid-coordinate world model (Stage 0, §5.1)
+
+**What was built:**
+- Migration `0003_sites`: a `sites` table (id, name, free-text `kind`, x, y) — every settlement/farm/resource site/business gets a row once its owning module exists to create one.
+- `src/engine/world/grid.ts` — pure math, no DB: `gridDistance` (straight-line distance between coordinates) and `travelDurationTicks` (distance → ticks, modified by transport mode, road quality, cargo load, and season per §5.1/§8.1).
+- `src/engine/world/sites.ts` — DB-backed `createSite`/`getSite`/`listSitesByKind`/`distanceBetweenSites`.
+- `Engine` gained matching passthrough methods plus `travelDurationBetweenSites`.
+
+**Decisions:**
+- **`sites.kind` is free text, no CHECK constraint.** §16 treats locations as data ("goods, recipes, buildings, locations... as data (DB records + JSON packs) from day one"); a fixed enum would fight that the moment construction/settlement modules want a new kind.
+- **Road quality, cargo load, and season are parameters `travelDurationTicks` accepts, not state it looks up.** There's no road-segment network or per-route condition tracking yet — that's Stage 7 territory (§Stage 7: "region screen... carts/wagons... freight capacity/speed by mode"). Stage 0's job is just the math primitive being correct and tested; callers supply real road/season data once transport/region modules exist to have it.
+- **Speed constants (`BASE_SPEED_UNITS_PER_TICK`, road/cargo/season multipliers) are placeholder tuning**, not balanced numbers — flagged for the balance harness (§17) once actual settlement distances exist to calibrate against.
+
+**Exit-test progress:** grid-coordinate world model ✅ (`src/engine/world/grid.test.ts`, `sites.test.ts`). Still open for Stage 0: conservation audit, item provenance recording.
+
+---
+
 ## 2026-07-14 — Timed-action framework (Stage 0, §4.3)
 
 **What was built:**

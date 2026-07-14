@@ -8,13 +8,20 @@ describe('applyMigrations', () => {
     const SQL = await loadSqlJs();
     const db = createDatabase(SQL);
 
-    expect(applyMigrations(db)).toEqual(['0001_init', '0002_entities_and_actions']);
+    expect(applyMigrations(db)).toEqual(['0001_init', '0002_entities_and_actions', '0003_sites']);
     expect(applyMigrations(db)).toEqual([]);
 
     const tables = db.exec("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name");
     const tableNames = tables[0].values.map((row) => String(row[0]));
     expect(tableNames).toEqual(
-      expect.arrayContaining(['actions', 'entities', 'event_log', 'schema_migrations', 'world_meta']),
+      expect.arrayContaining([
+        'actions',
+        'entities',
+        'event_log',
+        'schema_migrations',
+        'sites',
+        'world_meta',
+      ]),
     );
 
     db.close();
