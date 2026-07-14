@@ -4,6 +4,28 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-14 — The Interface Shell (Stage 1 complete, §Stage 1)
+
+**What was built:**
+- `ui-api` grew a real query/command surface beyond tick/calendar/log: `listSites`, `getSite`, `queueAction`, `getActorActions`, `interruptAction`, `getBalance`, plus re-exports of `Site`, `QueuedAction`, `Calendar`, `EngineEvent`/`EventScope`, and `MINUTES_PER_DAY` — so every component imports engine types from `ui-api` only, closing a gap the Stage 0 scaffold had left (`App.tsx` previously imported `EngineEvent` straight from `engine/eventBus`).
+- `src/engine/seed/demoWorld.ts` (`seedDemoWorld`, idempotent like `ensureWorldMeta`): one player entity + wallet + starting coin (a placeholder faucet, not a rolled starting condition), four sites (well, tavern, notice board, forest), and four dummy `ActionDefinition`s — including `chop_wood` at a flat 75% success rate, deliberately exercising both the success and failure outcome paths through the UI.
+- `src/hooks/useGameClock.ts`: drives pause/1×/4×/16× as a real `setInterval` loop (placeholder pacing: 5 game-minutes per 200ms tick at 1×) plus `skipToMorning`/`skipToActionComplete`, computed from `getCalendar`/`getActorActions` — no new engine capability needed, just arithmetic over what `ui-api` already exposes.
+- Components (`Hud`, `ActionQueuePanel`, `TimeControls`, `SceneHeader`, `LogPanel`) and screens (`SettlementScreen`, `LocationScreen`), wired together by `App.tsx`'s own `View` state (`{kind:'settlement'}` / `{kind:'location', siteId}` — no router library, the screen count doesn't warrant one yet).
+- `src/data/locationContent.ts`: per-site-kind icon, atmospheric description, and available dummy actions — placeholder content (§14.1), not the budgeted writing pass itself.
+
+**Decisions:**
+- **Components call `uiApi` getters directly during render instead of mirroring every value into `useState`.** The getters are synchronous sql.js queries against a small DB — cheap enough to call on every render — so a single `bump()` counter in `App.tsx` (triggered by the clock's `onAdvance` and by action-queuing handlers) is enough to force the whole tree to re-derive fresh state. Duplicating `tick`/`calendar`/`actions` into parallel `useState` would just be cache invalidation with extra steps.
+- **World seeding happens by calling `Engine` methods directly in `App.tsx`'s bootstrap effect, before `createUiApi` is ever called** — not through `ui-api`. Seeding is a one-time setup concern (same category as `Engine.bootstrap` itself, which `App.tsx` already called directly), not a running-game operation; putting `registerActionType`/`createSite` on the UI-facing surface would let screens re-seed the world at runtime, which nothing should ever do.
+- **Placeholder illustrations are a season/time-tinted CSS gradient (`SceneHeader`), not static images.** MASTERPLAN.md §14.1 calls out "season/time-tinted" location art specifically — a gradient keyed off `calendar.season` and day/night is the cheapest possible version of that *specific* requirement, versus a generic placeholder image that would have to be redone anyway once real art exists.
+- **The dummy `chop_wood` action has a real (if placeholder) failure rate, not 100% success.** Stage 0's exit test already proved the engine handles failed actions; Stage 1's job is proving the *interface* renders that path too. A 100%-success demo action would have silently left the failure-outcome UI unverified until Stage 2's real skill-gated actions arrived.
+- **`index.css`'s `#root` lost its Vite-starter `text-align: center` / fixed `1126px` width.** Both were leftover boilerplate fighting a real HUD/settlement layout (centered game text, a hard-capped width) with no other page depending on them; changed to `text-align: left` and `max-width`, keeping the light/dark theme variables untouched.
+
+**Verification:** `npm run validate` passes (33 tests, unchanged — Stage 1 is UI-only, no engine behavior changed except the additive `ui-api`/`Engine.listSites` surface). Browser smoke test (Playwright against the Vite dev server): navigated settlement → forest location → back → settlement log tab with zero console errors; queued `chop_wood`, watched it sit `Queued` while paused, start and show a live progress bar at 4× speed, and resolve — this run landed on the **failure** branch ("You misjudge the swing and ruin the cut"), confirming both outcome paths render correctly through the personal log and the HUD's action-queue panel.
+
+**Exit-test status (Stage 1, §Stage 1): met** — every panel (settlement, location, settlement log, personal log) is reachable, and a dummy timed action runs end-to-end with progress UI and log entries. Stage 2 (Survival Loop, §Stage 2) is next.
+
+---
+
 ## 2026-07-14 — Dev tooling audit: strict TypeScript, ESLint, Prettier
 
 Not a MASTERPLAN.md module — a tooling/dependency audit of the whole project, per §4.2's "modular and testable" and §19's engine/UI separation rules being worth actually enforcing at the compiler/linter level, not just by convention.

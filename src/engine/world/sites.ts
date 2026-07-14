@@ -29,6 +29,10 @@ export function listSitesByKind(db: Database, kind: string): Site[] {
   );
 }
 
+export function listSites(db: Database): Site[] {
+  return queryRows(db, 'SELECT id, name, kind, x, y FROM sites ORDER BY id').map(rowToSite);
+}
+
 export function distanceBetweenSites(db: Database, aId: string, bId: string): number {
   const a = getSite(db, aId);
   const b = getSite(db, bId);

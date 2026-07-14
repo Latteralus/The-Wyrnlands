@@ -22,7 +22,14 @@ import { attachLogger, queryLog } from './logs/logger';
 import { createRng, hashSeed, type Rng } from './rng';
 import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
 import { travelDurationTicks, type TravelConditions } from './world/grid';
-import { createSite, distanceBetweenSites, getSite, listSitesByKind, type Site } from './world/sites';
+import {
+  createSite,
+  distanceBetweenSites,
+  getSite,
+  listSites,
+  listSitesByKind,
+  type Site,
+} from './world/sites';
 import type { ActionDefinition, QueuedAction } from './actions/types';
 import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
 import type { Database } from 'sql.js';
@@ -135,6 +142,10 @@ export class Engine {
 
   listSitesByKind(kind: string): Site[] {
     return listSitesByKind(this.db, kind);
+  }
+
+  listSites(): Site[] {
+    return listSites(this.db);
   }
 
   distanceBetweenSites(aId: string, bId: string): number {

@@ -8,34 +8,64 @@
   margin-bottom: 0.25rem;
 }
 
-.subtitle {
-  color: var(--text);
-  opacity: 0.75;
-}
-
-.vitals {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 0.25rem 1rem;
-  margin: 1.5rem 0;
-}
-
-.vitals dt {
-  font-weight: 600;
-}
-
-.vitals dd {
-  margin: 0;
-}
-
-.time-controls {
+.game-shell {
   display: flex;
-  gap: 0.75rem;
-  margin-bottom: 1.5rem;
+  flex-direction: column;
+  flex: 1;
+  padding: 0 1.5rem 1.5rem;
 }
 
-.time-controls button {
+.game-shell h1 {
+  font-size: 32px;
+  margin: 1rem 0;
+}
+
+/* --- HUD --- */
+
+.hud {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hud-row {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.hud-stat {
+  font-weight: 600;
+  color: var(--text-h);
+}
+
+.hud-needs-stub {
+  opacity: 0.6;
+  font-weight: 400;
+  cursor: help;
+}
+
+/* --- Time controls / tabs / buttons --- */
+
+button {
   font: inherit;
+}
+
+.time-controls,
+.tabs {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.time-controls button,
+.tabs button,
+.location-actions button {
   padding: 0.5rem 1rem;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -43,14 +73,199 @@
   cursor: pointer;
 }
 
-.world-log {
-  list-style: none;
-  padding: 0;
-  font-family: var(--mono);
+.time-controls button.active,
+.tabs button.active {
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+}
+
+.time-controls button:disabled,
+.location-actions button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* --- Action queue --- */
+
+.action-queue {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.action-queue-empty {
+  opacity: 0.6;
+  margin: 0;
+}
+
+.action-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.action-item-label {
+  text-transform: capitalize;
   font-size: 0.9rem;
 }
 
-.world-log li {
+.action-progress-bar {
+  width: 100px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--code-bg);
+  overflow: hidden;
+}
+
+.action-progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+
+/* --- Scene header (placeholder illustration) --- */
+
+.scene-header {
+  border-radius: 8px;
+  padding: 2rem 1rem;
+  text-align: center;
+  color: white;
+  margin-bottom: 1rem;
+  background: linear-gradient(160deg, #7fc8e8, #bfe8b0);
+}
+
+.scene-header.season-spring {
+  background: linear-gradient(160deg, #8fd3a0, #d9f0a3);
+}
+.scene-header.season-summer {
+  background: linear-gradient(160deg, #6ec6e8, #f7e08a);
+}
+.scene-header.season-autumn {
+  background: linear-gradient(160deg, #e8a15b, #c9622f);
+}
+.scene-header.season-winter {
+  background: linear-gradient(160deg, #a9c6da, #e7edf2);
+  color: #1c2733;
+}
+
+.scene-header.time-night {
+  filter: brightness(0.55);
+  color: #f0f0f5;
+}
+
+.scene-header-icon {
+  font-size: 3rem;
+  display: block;
+}
+
+.scene-header h2 {
+  color: inherit;
+  margin: 0.25rem 0;
+}
+
+.scene-header-calendar {
+  opacity: 0.9;
+  font-size: 0.9rem;
+}
+
+/* --- Settlement / location screens --- */
+
+.game-body {
+  display: flex;
+  gap: 1.5rem;
+  align-items: flex-start;
+}
+
+.game-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.game-sidebar {
+  width: 280px;
+  flex-shrink: 0;
+}
+
+.location-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.75rem;
+}
+
+.location-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 1rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--accent-bg);
+  cursor: pointer;
+}
+
+.location-card:hover {
+  border-color: var(--accent-border);
+}
+
+.location-card-icon {
+  font-size: 1.75rem;
+}
+
+.location-card-name {
+  font-size: 0.9rem;
+  text-align: center;
+}
+
+.back-button {
+  border: none;
+  background: none;
+  color: var(--accent);
+  cursor: pointer;
+  padding: 0;
+  margin-bottom: 1rem;
+}
+
+.location-description {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.presence-roster-stub {
+  opacity: 0.6;
+}
+
+.location-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+/* --- Logs --- */
+
+.log-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 0.85rem;
+  max-height: 480px;
+  overflow-y: auto;
+}
+
+.log-list li {
   padding: 0.35rem 0;
   border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.log-tick {
+  opacity: 0.6;
+}
+
+.log-empty {
+  opacity: 0.6;
+  font-family: var(--sans);
 }

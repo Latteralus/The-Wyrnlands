@@ -1,16 +1,26 @@
 import { useEffect, useRef, useState } from 'react';
+import { Hud } from './components/Hud';
+import { LogPanel } from './components/LogPanel';
 import { createDatabase } from './engine/db/sqlite';
 import { loadSqlJs } from './engine/db/sqlite.browser';
 import { Engine } from './engine/engine';
+import { seedDemoWorld, PLAYER_ID } from './engine/seed/demoWorld';
 import { createUiApi, type UiApi } from './engine/ui-api';
-import type { EngineEvent } from './engine/eventBus';
+import { useGameClock } from './hooks/useGameClock';
+import { LocationScreen } from './screens/LocationScreen';
+import { SettlementScreen } from './screens/SettlementScreen';
 import './App.css';
+
+type View = { kind: 'settlement' } | { kind: 'location'; siteId: string };
 
 function App() {
   const engineRef = useRef<Engine | null>(null);
   const [uiApi, setUiApi] = useState<UiApi | null>(null);
-  const [tick, setTick] = useState(0);
-  const [worldLog, setWorldLog] = useState<EngineEvent[]>([]);
+  const [view, setView] = useState<View>({ kind: 'settlement' });
+  // Unread on purpose — its setter just forces a re-render so screens re-query
+  // uiApi (a thin sync SQLite wrapper) after a tick batch or a queued action.
+  const [, bumpCounter] = useState(0);
+  const bump = () => bumpCounter((c) => c + 1);
 
   useEffect(() => {
     let cancelled = false;
@@ -19,15 +29,13 @@ function App() {
       const SQL = await loadSqlJs();
       const db = createDatabase(SQL);
       const engine = Engine.bootstrap(db, { seed: 'wyrnlands-dev' });
+      seedDemoWorld(engine);
       if (cancelled) {
         engine.dispose();
         return;
       }
       engineRef.current = engine;
-      const api = createUiApi(engine);
-      setUiApi(api);
-      setTick(api.getTick());
-      setWorldLog(api.queryLog('world', 5));
+      setUiApi(createUiApi(engine));
     })();
 
     return () => {
@@ -37,12 +45,7 @@ function App() {
     };
   }, []);
 
-  const advance = (count: number) => {
-    if (!uiApi) return;
-    uiApi.advanceTicks(count);
-    setTick(uiApi.getTick());
-    setWorldLog(uiApi.queryLog('world', 5));
-  };
+  const clock = useGameClock(uiApi, bump);
 
   if (!uiApi) {
     return (
@@ -52,40 +55,36 @@ function App() {
     );
   }
 
-  const calendar = uiApi.getCalendar();
+  const site = view.kind === 'location' ? uiApi.getSite(view.siteId) : null;
 
   return (
-    <main className="boot-screen">
+    <div className="game-shell">
       <h1>The Wyrnlands</h1>
-      <p className="subtitle">Stage 0 scaffold — the interface reads engine state through ui-api only.</p>
+      <Hud uiApi={uiApi} playerId={PLAYER_ID} clock={clock} onRefresh={bump} />
 
-      <dl className="vitals">
-        <dt>Tick</dt>
-        <dd>{tick}</dd>
-        <dt>Calendar</dt>
-        <dd>
-          Year {calendar.year}, {calendar.season}, day {calendar.day}
-        </dd>
-      </dl>
-
-      <div className="time-controls">
-        <button type="button" onClick={() => advance(60)}>
-          Advance 1 hour
-        </button>
-        <button type="button" onClick={() => advance(60 * 24)}>
-          Advance 1 day
-        </button>
+      <div className="game-body">
+        <main className="game-main">
+          {view.kind === 'settlement' || !site ? (
+            <SettlementScreen
+              uiApi={uiApi}
+              onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
+            />
+          ) : (
+            <LocationScreen
+              uiApi={uiApi}
+              site={site}
+              playerId={PLAYER_ID}
+              onBack={() => setView({ kind: 'settlement' })}
+              onAction={bump}
+            />
+          )}
+        </main>
+        <aside className="game-sidebar">
+          <h3>Personal Log</h3>
+          <LogPanel uiApi={uiApi} scope="personal" emptyMessage="Nothing has happened to you yet." />
+        </aside>
       </div>
-
-      <h2>World log</h2>
-      <ul className="world-log">
-        {worldLog.map((event, i) => (
-          <li key={i}>
-            [{event.tick}] {event.message}
-          </li>
-        ))}
-      </ul>
-    </main>
+    </div>
   );
 }
 
