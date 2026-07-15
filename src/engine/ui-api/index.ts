@@ -1,10 +1,13 @@
 import type { QueuedAction } from '../actions/types';
 import type { Engine } from '../engine';
 import type { EngineEvent, EventScope } from '../eventBus';
+import type { WornGear } from '../gear/gear';
+import type { MarketListing } from '../market/market';
+import type { Needs } from '../needs/needs';
 import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
 
-export type { EngineEvent, EventScope, QueuedAction, Calendar, Site };
+export type { EngineEvent, EventScope, QueuedAction, Calendar, Site, Needs, WornGear, MarketListing };
 export { MINUTES_PER_DAY } from '../time/clock';
 
 /**
@@ -21,9 +24,13 @@ export interface UiApi {
   listSites(): Site[];
   getSite(id: string): Site | null;
   queueAction(actorId: string, type: string): number;
-  getActorActions(actorId: string): QueuedAction[];
+  getActiveActions(actorId: string): QueuedAction[];
+  getCurrentAction(actorId: string): QueuedAction | null;
   interruptAction(actorId: string): void;
   getBalance(ownerId: string): number;
+  getNeeds(entityId: string): Needs | null;
+  getWornGear(entityId: string): WornGear[];
+  listMarketListings(siteId: string): MarketListing[];
 }
 
 export function createUiApi(engine: Engine): UiApi {
@@ -36,8 +43,12 @@ export function createUiApi(engine: Engine): UiApi {
     listSites: () => engine.listSites(),
     getSite: (id) => engine.getSite(id),
     queueAction: (actorId, type) => engine.queueAction(actorId, type),
-    getActorActions: (actorId) => engine.getActorActions(actorId),
+    getActiveActions: (actorId) => engine.getActiveActions(actorId),
+    getCurrentAction: (actorId) => engine.getCurrentAction(actorId),
     interruptAction: (actorId) => engine.interruptAction(actorId),
     getBalance: (ownerId) => engine.getBalance(ownerId),
+    getNeeds: (entityId) => engine.getNeeds(entityId),
+    getWornGear: (entityId) => engine.getWornGear(entityId),
+    listMarketListings: (siteId) => engine.listMarketListings(siteId),
   };
 }

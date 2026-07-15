@@ -17,9 +17,7 @@ function progressFraction(action: QueuedAction, currentTick: number): number {
 // shows what the actor is doing now, its live progress, and what's queued
 // behind it.
 export function ActionQueuePanel({ uiApi, actorId, currentTick, onInterrupt }: ActionQueuePanelProps) {
-  const active = uiApi
-    .getActorActions(actorId)
-    .filter((a) => a.status === 'queued' || a.status === 'in_progress');
+  const active = uiApi.getActiveActions(actorId);
 
   if (active.length === 0) {
     return <p className="action-queue-empty">No action in progress.</p>;

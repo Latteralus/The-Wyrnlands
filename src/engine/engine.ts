@@ -1,6 +1,8 @@
 import {
   enqueueAction,
+  getCurrentAction,
   interruptCurrentAction,
+  listActiveActions,
   listActorActions,
   processActorActions,
 } from './actions/actionQueue';
@@ -9,6 +11,9 @@ import { runConservationAudit, type AuditResult } from './audit/conservationAudi
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
+import { equipItem, getWornGear, getWornItemInSlot, wearGear, type WornGear } from './gear/gear';
+import { getGoodDefinition } from './goods/catalog';
+import { canCarry, getCarriedWeightKg } from './inventory/capacity';
 import {
   destroyItem,
   getItem,
@@ -19,7 +24,24 @@ import {
 } from './inventory/items';
 import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
 import { attachLogger, queryLog } from './logs/logger';
+import {
+  decrementStock,
+  getListing,
+  listListingsForSite,
+  seedListing,
+  type MarketListing,
+} from './market/market';
+import {
+  ensureNeeds,
+  getNeeds,
+  registerCollapseRecoveryAction,
+  restoreNeed,
+  tickNeeds,
+  type Needs,
+  type NeedKey,
+} from './needs/needs';
 import { createRng, hashSeed, type Rng } from './rng';
+import { addXp, ensureSkill, getLevel, getSuccessChance, getXp } from './skills/skills';
 import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
 import { travelDurationTicks, type TravelConditions } from './world/grid';
 import {
@@ -33,6 +55,11 @@ import {
 import type { ActionDefinition, QueuedAction } from './actions/types';
 import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
 import type { Database } from 'sql.js';
+
+// A body-slot garment needs at least this much warmth rating to count as
+// protection from a winter chill (§6). Placeholder threshold alongside the
+// needs decay constants in needs.ts.
+const WARMTH_PROTECTION_THRESHOLD = 30;
 
 export interface EngineOptions {
   seed: string;
@@ -54,6 +81,7 @@ export class Engine {
     this.db = db;
     this.rng = createRng(hashSeed(seed));
     this.detachLogger = attachLogger(db, this.bus);
+    registerCollapseRecoveryAction(this.actions);
   }
 
   static bootstrap(db: Database, options: EngineOptions): Engine {
@@ -85,18 +113,42 @@ export class Engine {
     return deriveCalendar(this.tick);
   }
 
+  // Wrapped in one explicit transaction rather than leaving each tick's
+  // writes as their own autocommit statement: sql.js's WASM heap doesn't
+  // reclaim per-statement rollback-journal overhead between thousands of
+  // individual autocommits, and a long headless run (this method is the
+  // *only* thing that drives ticks — §Stage 2's 30-day exit scenario, later
+  // Stage 4/5's 90-day/2-year runs) reliably exhausts it and crashes with
+  // "out of memory" well under 100k ticks. One transaction per call fixes it
+  // — confirmed empirically (30k ticks unwrapped: OOM; 43.2k wrapped: clean).
   advanceTicks(count: number): void {
-    for (let i = 0; i < count; i++) {
-      this.stepOneTick();
+    this.db.run('BEGIN');
+    try {
+      for (let i = 0; i < count; i++) {
+        this.stepOneTick();
+      }
+      this.db.run('COMMIT');
+    } catch (err) {
+      // A sufficiently severe error (e.g. SQLite's own out-of-memory) can
+      // force-abort the transaction itself, leaving nothing for this
+      // ROLLBACK to roll back — that secondary failure must not mask the
+      // original error, which is the one worth seeing.
+      try {
+        this.db.run('ROLLBACK');
+      } catch {
+        // transaction already gone; original err is what matters
+      }
+      throw err;
     }
   }
 
   private stepOneTick(): void {
     const nextTick = this.tick + 1;
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
+    this.applyNeedsCadence(nextTick);
     this.processActiveActions(nextTick);
-    // Further cadence hooks (needs, market, households, ...) attach here
-    // as each module lands — see MASTERPLAN.md §4.2.
+    // Further cadence hooks (market, households, ...) attach here as each
+    // module lands — see MASTERPLAN.md §4.2.
     if (nextTick % MINUTES_PER_DAY === 0) {
       runConservationAudit(this.db, this.bus, nextTick);
     }
@@ -109,6 +161,20 @@ export class Engine {
     );
     for (const row of rows) {
       processActorActions(this.db, this.bus, this.actions, this.rng, String(row[0]), currentTick);
+    }
+  }
+
+  // Needs decay before actions resolve each tick, so an action that
+  // completes this same tick sees the tick's own decay applied first.
+  private applyNeedsCadence(currentTick: number): void {
+    const season = deriveCalendar(currentTick).season;
+    const rows = queryRows(this.db, 'SELECT entity_id FROM needs ORDER BY entity_id ASC');
+    for (const row of rows) {
+      const entityId = String(row[0]);
+      const body = getWornItemInSlot(this.db, entityId, 'body');
+      const warmth = body ? (getGoodDefinition(body.goodType).warmth ?? 0) : 0;
+      const exposedToCold = season === 'winter' && warmth < WARMTH_PROTECTION_THRESHOLD;
+      tickNeeds(this.db, this.bus, this.actions, entityId, currentTick, { exposedToCold });
     }
   }
 
@@ -126,6 +192,19 @@ export class Engine {
 
   getActorActions(actorId: string): QueuedAction[] {
     return listActorActions(this.db, actorId);
+  }
+
+  // Cheap "what's happening right now" query — unlike getActorActions(),
+  // this doesn't scan the actor's whole history, so it's safe to poll every
+  // tick (a headless scenario script's own decision loop, a future HUD).
+  getCurrentAction(actorId: string): QueuedAction | null {
+    return getCurrentAction(this.db, actorId);
+  }
+
+  // The HUD's "current action + queue" (§14.2) — just the not-yet-resolved
+  // rows, same reasoning as getCurrentAction() above.
+  getActiveActions(actorId: string): QueuedAction[] {
+    return listActiveActions(this.db, actorId);
   }
 
   interruptAction(actorId: string): void {
@@ -202,6 +281,84 @@ export class Engine {
 
   runConservationAudit(): AuditResult {
     return runConservationAudit(this.db, this.bus, this.tick);
+  }
+
+  // --- Needs (§6) ---
+
+  ensureNeeds(entityId: string): void {
+    ensureNeeds(this.db, entityId, this.tick);
+  }
+
+  getNeeds(entityId: string): Needs | null {
+    return getNeeds(this.db, entityId);
+  }
+
+  restoreNeed(entityId: string, need: NeedKey, amount: number, note?: string): void {
+    restoreNeed(this.db, this.bus, entityId, need, amount, this.tick, note);
+  }
+
+  // --- Skills (§13.2) ---
+
+  ensureSkill(entityId: string, skill: string): void {
+    ensureSkill(this.db, entityId, skill);
+  }
+
+  getSkillXp(entityId: string, skill: string): number {
+    return getXp(this.db, entityId, skill);
+  }
+
+  getSkillLevel(entityId: string, skill: string): number {
+    return getLevel(this.db, entityId, skill);
+  }
+
+  getSkillSuccessChance(entityId: string, skill: string): number {
+    return getSuccessChance(this.db, entityId, skill);
+  }
+
+  addSkillXp(entityId: string, skill: string, amount: number): void {
+    addXp(this.db, entityId, skill, amount);
+  }
+
+  // --- Gear (§6, §14.2) ---
+
+  equipItem(entityId: string, itemId: string): void {
+    equipItem(this.db, this.bus, entityId, itemId, this.tick);
+  }
+
+  getWornGear(entityId: string): WornGear[] {
+    return getWornGear(this.db, entityId);
+  }
+
+  wearGear(entityId: string, slot: WornGear['slot'], amount: number): void {
+    wearGear(this.db, this.bus, entityId, slot, amount, this.tick);
+  }
+
+  // --- Market (§Stage 2) ---
+
+  seedMarketListing(siteId: string, goodType: string, price: number, quantity: number): void {
+    seedListing(this.db, siteId, goodType, price, quantity);
+  }
+
+  getMarketListing(siteId: string, goodType: string): MarketListing | null {
+    return getListing(this.db, siteId, goodType);
+  }
+
+  listMarketListings(siteId: string): MarketListing[] {
+    return listListingsForSite(this.db, siteId);
+  }
+
+  decrementMarketStock(siteId: string, goodType: string, quantity: number): void {
+    decrementStock(this.db, siteId, goodType, quantity);
+  }
+
+  // --- Inventory capacity (§14.2) ---
+
+  getCarriedWeightKg(containerId: string): number {
+    return getCarriedWeightKg(this.db, containerId);
+  }
+
+  canCarry(containerId: string, additionalWeightKg: number): boolean {
+    return canCarry(this.db, containerId, additionalWeightKg);
   }
 
   queryLog(scope: EventScope, limit = 100): EngineEvent[] {

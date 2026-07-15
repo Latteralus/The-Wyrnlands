@@ -32,7 +32,7 @@ function getNextSequence(db: Database, actorId: string): number {
   return Number(row?.[0]);
 }
 
-function getCurrentAction(db: Database, actorId: string): QueuedAction | null {
+export function getCurrentAction(db: Database, actorId: string): QueuedAction | null {
   const row = queryRow(
     db,
     `SELECT ${COLUMNS} FROM actions
@@ -47,6 +47,18 @@ export function listActorActions(db: Database, actorId: string): QueuedAction[] 
   return queryRows(db, `SELECT ${COLUMNS} FROM actions WHERE actor_id = ? ORDER BY sequence ASC`, [
     actorId,
   ]).map(rowToAction);
+}
+
+// The HUD's "current action + queue" (§14.2) only ever needs the handful of
+// not-yet-resolved rows, not the actor's entire history — polling
+// listActorActions() every tick for this is an O(n²) trap over a long play
+// session (the same one the Stage 2 scenario test hit; see DECISIONS.md).
+export function listActiveActions(db: Database, actorId: string): QueuedAction[] {
+  return queryRows(
+    db,
+    `SELECT ${COLUMNS} FROM actions WHERE actor_id = ? AND status IN ('queued', 'in_progress') ORDER BY sequence ASC`,
+    [actorId],
+  ).map(rowToAction);
 }
 
 export function enqueueAction(
@@ -93,7 +105,8 @@ function resolveAction(
   currentTick: number,
 ): void {
   const definition = registry.get(action.type);
-  const outcome = definition.resolve(rng);
+  const ctx = { db, bus, actorId: action.actorId, tick: currentTick };
+  const outcome = definition.resolve(rng, ctx);
   const status: ActionStatus = outcome.success ? 'complete' : 'failed';
   db.run('UPDATE actions SET status = ?, progress_ticks = ?, outcome = ? WHERE id = ?', [
     status,
@@ -113,6 +126,7 @@ function resolveAction(
       { data: outcome.data },
     ),
   );
+  definition.applyOutcome?.(ctx, outcome);
 }
 
 // Runs one actor's queue forward by one tick. Chains transitions (a
@@ -144,6 +158,23 @@ export function processActorActions(
 
     resolveAction(db, bus, registry, rng, action, currentTick);
   }
+}
+
+// A forced interruption (e.g. collapse, §6) doesn't just stop the current
+// action — whatever else was queued behind it no longer applies either, so
+// it's cancelled rather than left to silently resume later.
+export function cancelQueuedActions(db: Database, bus: EventBus, actorId: string, currentTick: number): void {
+  const queued = queryRows(db, "SELECT id FROM actions WHERE actor_id = ? AND status = 'queued'", [actorId]);
+  if (queued.length === 0) return;
+  db.run("UPDATE actions SET status = 'cancelled' WHERE actor_id = ? AND status = 'queued'", [actorId]);
+  bus.emit({
+    tick: currentTick,
+    scope: 'personal',
+    actorId,
+    type: 'action.queue_cancelled',
+    message: `${actorId}'s remaining queued actions were cancelled.`,
+    data: { count: queued.length },
+  });
 }
 
 // Proportional results on interruption (§4.3): the action is stopped where it

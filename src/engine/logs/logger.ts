@@ -5,17 +5,14 @@ import type { Database } from 'sql.js';
 
 export function attachLogger(db: Database, bus: EventBus): () => void {
   return bus.subscribe((event) => {
-    db.run(
-      'INSERT INTO event_log (tick, scope, actor_id, type, message, data) VALUES (?, ?, ?, ?, ?, ?)',
-      [
-        event.tick,
-        event.scope,
-        event.actorId ?? null,
-        event.type,
-        event.message,
-        event.data ? JSON.stringify(event.data) : null,
-      ],
-    );
+    db.run('INSERT INTO event_log (tick, scope, actor_id, type, message, data) VALUES (?, ?, ?, ?, ?, ?)', [
+      event.tick,
+      event.scope,
+      event.actorId ?? null,
+      event.type,
+      event.message,
+      event.data ? JSON.stringify(event.data) : null,
+    ]);
   });
 }
 

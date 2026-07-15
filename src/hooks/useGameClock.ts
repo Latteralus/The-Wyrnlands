@@ -53,7 +53,8 @@ export function useGameClock(uiApi: UiApi | null, onAdvance: () => void): GameCl
 
   const skipToActionComplete = (actorId: string) => {
     if (!uiApi) return;
-    const inProgress = uiApi.getActorActions(actorId).find((a) => a.status === 'in_progress');
+    const current = uiApi.getCurrentAction(actorId);
+    const inProgress = current?.status === 'in_progress' ? current : null;
     if (!inProgress || inProgress.endsAtTick === null) return;
     const remaining = inProgress.endsAtTick - uiApi.getTick();
     if (remaining > 0) uiApi.advanceTicks(remaining);

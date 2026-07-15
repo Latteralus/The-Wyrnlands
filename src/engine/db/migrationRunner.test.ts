@@ -13,6 +13,8 @@ describe('applyMigrations', () => {
       '0002_entities_and_actions',
       '0003_sites',
       '0004_inventory_and_audit',
+      '0005_survival',
+      '0006_action_cancelled_status',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -25,10 +27,14 @@ describe('applyMigrations', () => {
         'audits',
         'entities',
         'event_log',
+        'gear',
         'items',
+        'market_listings',
+        'needs',
         'provenance_events',
         'schema_migrations',
         'sites',
+        'skills',
         'wallets',
         'world_meta',
       ]),

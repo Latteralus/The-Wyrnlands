@@ -29,6 +29,17 @@ export function countActiveItems(db: Database): number {
   return Number(row?.[0]);
 }
 
+// Picks any one active item of a type out of a container — e.g. "sell a
+// firewood" doesn't care which specific unit, just that one exists.
+export function findFirstActiveItem(db: Database, containerId: string, type: string): Item | null {
+  const row = queryRow(
+    db,
+    `SELECT ${ITEM_COLUMNS} FROM items WHERE container_id = ? AND type = ? AND status = 'active' LIMIT 1`,
+    [containerId, type],
+  );
+  return row ? rowToItem(row) : null;
+}
+
 function recordProvenance(
   db: Database,
   params: {
@@ -82,14 +93,18 @@ export interface ProduceItemParams {
   tick: number;
   actorId?: string;
   note?: string;
+  // Gear/tools only (§6) — the good catalog's maxDurability, so a freshly
+  // produced item starts at full condition instead of NULL (which would
+  // read as 0, i.e. already broken).
+  durability?: number;
 }
 
 export function produceItem(db: Database, bus: EventBus, params: ProduceItemParams): void {
   const qualityTier = params.qualityTier ?? 1;
   db.run(
-    `INSERT INTO items (id, type, quality_tier, container_id, status, created_at_tick)
-     VALUES (?, ?, ?, ?, 'active', ?)`,
-    [params.id, params.type, qualityTier, params.containerId, params.tick],
+    `INSERT INTO items (id, type, quality_tier, container_id, status, created_at_tick, durability)
+     VALUES (?, ?, ?, ?, 'active', ?, ?)`,
+    [params.id, params.type, qualityTier, params.containerId, params.tick, params.durability ?? null],
   );
   recordProvenance(
     db,
