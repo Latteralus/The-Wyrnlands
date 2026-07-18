@@ -16,6 +16,8 @@ describe('applyMigrations', () => {
       '0005_survival',
       '0006_action_cancelled_status',
       '0007_jobs_and_companies',
+      '0008_npcs_and_households',
+      '0009_rng_state',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -31,6 +33,8 @@ describe('applyMigrations', () => {
         'entities',
         'event_log',
         'gear',
+        'households',
+        'household_members',
         'items',
         'job_slots',
         'market_listings',

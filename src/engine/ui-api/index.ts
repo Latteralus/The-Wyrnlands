@@ -1,10 +1,13 @@
 import type { QueuedAction } from '../actions/types';
 import type { Engine } from '../engine';
+import type { Entity } from '../entities';
 import type { EngineEvent, EventScope } from '../eventBus';
 import type { WornGear } from '../gear/gear';
 import type { ApplyResult, Employment, JobSlot } from '../jobs/jobs';
 import type { MarketListing } from '../market/market';
 import type { Needs } from '../needs/needs';
+import type { Household } from '../population/households';
+import type { PresentEntity } from '../population/presence';
 import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
 
@@ -20,6 +23,9 @@ export type {
   JobSlot,
   Employment,
   ApplyResult,
+  Entity,
+  Household,
+  PresentEntity,
 };
 export { MINUTES_PER_DAY } from '../time/clock';
 
@@ -48,6 +54,13 @@ export interface UiApi {
   getEmployment(entityId: string): Employment | null;
   applyForJob(entityId: string, jobSlotId: string, haggle: boolean): ApplyResult;
   quitJob(entityId: string): void;
+  getSkillLevel(entityId: string, skill: string): number;
+  getEntity(id: string): Entity | null;
+  listHouseholds(): Household[];
+  getHousehold(id: string): Household | null;
+  listHouseholdMembers(householdId: string): string[];
+  getHouseholdIdForMember(entityId: string): string | null;
+  listPresentEntities(siteId: string): PresentEntity[];
 }
 
 export function createUiApi(engine: Engine): UiApi {
@@ -71,5 +84,12 @@ export function createUiApi(engine: Engine): UiApi {
     getEmployment: (entityId) => engine.getEmployment(entityId),
     applyForJob: (entityId, jobSlotId, haggle) => engine.applyForJob(entityId, jobSlotId, { haggle }),
     quitJob: (entityId) => engine.quitJob(entityId),
+    getSkillLevel: (entityId, skill) => engine.getSkillLevel(entityId, skill),
+    getEntity: (id) => engine.getEntity(id),
+    listHouseholds: () => engine.listHouseholds(),
+    getHousehold: (id) => engine.getHousehold(id),
+    listHouseholdMembers: (householdId) => engine.listHouseholdMembers(householdId),
+    getHouseholdIdForMember: (entityId) => engine.getHouseholdIdForMember(entityId),
+    listPresentEntities: (siteId) => engine.listPresentEntities(siteId),
   };
 }

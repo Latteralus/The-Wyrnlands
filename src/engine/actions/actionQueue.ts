@@ -152,7 +152,19 @@ export function processActorActions(
 
     const progressTicks = currentTick - (action.startedAtTick ?? currentTick);
     if (progressTicks < action.durationTicks) {
-      db.run('UPDATE actions SET progress_ticks = ? WHERE id = ?', [progressTicks, action.id]);
+      // Deliberately not persisted here. progress_ticks on an in-progress
+      // row is always re-derivable as currentTick - startedAtTick — and
+      // that's exactly what ActionQueuePanel's progressFraction() already
+      // computes client-side, never reading this column while the action is
+      // still running. Writing it every single tick was pure overhead: a
+      // 90-day run (129,600 ticks) with an action in progress most of that
+      // time turns into ~129,600 redundant UPDATEs, which is what actually
+      // exhausted sql.js's WASM heap when Stage 4 first tried a 90-day run
+      // (not the ~40 NPCs — they'd already been moved off the per-tick path
+      // entirely by then). The column still gets its real, final value at
+      // resolution (resolveAction below) and on interruption
+      // (interruptCurrentAction) — the only two moments anything persisted
+      // actually needs to be correct.
       return;
     }
 

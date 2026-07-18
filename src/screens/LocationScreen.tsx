@@ -9,6 +9,7 @@ interface LocationScreenProps {
   onBack: () => void;
   onAction: () => void;
   onOpenJobs: () => void;
+  onSelectNpc: (entityId: string) => void;
 }
 
 // Market actions are named buy_<good>/sell_<good> (market/market.ts) — used
@@ -27,13 +28,23 @@ function workShiftJobSlotId(actionType: string): string | null {
 }
 
 // §5.5 Location panels: "illustration, atmospheric description (conditional
-// on season/scarcity/time), presence roster, available actions." Presence
-// rosters stay a stub until NPCs exist (Stage 4).
-export function LocationScreen({ uiApi, site, playerId, onBack, onAction, onOpenJobs }: LocationScreenProps) {
+// on season/scarcity/time), presence roster, available actions." §Stage 4
+// gives the presence roster real NPCs (§Stage4's hourly presence lookup —
+// see population/presence.ts).
+export function LocationScreen({
+  uiApi,
+  site,
+  playerId,
+  onBack,
+  onAction,
+  onOpenJobs,
+  onSelectNpc,
+}: LocationScreenProps) {
   const calendar = uiApi.getCalendar();
   const content = getLocationContent(site.kind);
   const listings = uiApi.listMarketListings(site.id);
   const employment = uiApi.getEmployment(playerId);
+  const present = uiApi.listPresentEntities(site.id);
 
   const handleAction = (type: string) => {
     uiApi.queueAction(playerId, type);
@@ -51,7 +62,17 @@ export function LocationScreen({ uiApi, site, playerId, onBack, onAction, onOpen
       <p className="location-description">{content.description}</p>
 
       <h3>{"Who's here"}</h3>
-      <p className="presence-roster-stub">You are here. NPCs arrive in Stage 4.</p>
+      {present.length === 0 ? (
+        <p className="presence-roster-stub">{"You're the only one here right now."}</p>
+      ) : (
+        <div className="presence-roster">
+          {present.map((entity) => (
+            <button key={entity.entityId} type="button" onClick={() => onSelectNpc(entity.entityId)}>
+              {entity.name}
+            </button>
+          ))}
+        </div>
+      )}
 
       {site.kind === 'notice_board' && (
         <button type="button" onClick={onOpenJobs}>

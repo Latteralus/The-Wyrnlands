@@ -7,6 +7,8 @@ import type { Database } from 'sql.js';
 export const LABOR_SKILL = 'labor';
 export const FARMING_SKILL = 'farming';
 export const TRADING_SKILL = 'trading'; // §9.8/§13.2: margins + haggling
+export const WOODCUTTING_SKILL = 'woodcutting';
+export const MANAGEMENT_SKILL = 'management'; // §9.2: business owners' skill
 
 // Steep, learn-by-doing requirements (§13.2 "requirements grow steeply").
 // Placeholder curve — revisit with the balance harness (§17) once the harsh-

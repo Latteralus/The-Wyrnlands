@@ -1,9 +1,4 @@
-import {
-  cancelQueuedActions,
-  enqueueAction,
-  getCurrentAction,
-  interruptCurrentAction,
-} from '../actions/actionQueue';
+import { cancelQueuedActions, enqueueAction, interruptCurrentAction } from '../actions/actionQueue';
 import { queryRow } from '../db/sqlite';
 import type { ActionRegistry } from '../actions/registry';
 import type { EventBus } from '../eventBus';
@@ -57,7 +52,7 @@ export function getNeeds(db: Database, entityId: string): Needs | null {
   return row ? rowToNeeds(row) : null;
 }
 
-function clamp(value: number): number {
+export function clamp(value: number): number {
   return Math.max(0, Math.min(100, value));
 }
 
@@ -111,6 +106,16 @@ function triggerCollapse(
 // The per-tick needs cadence (§4.2): decays every need, then checks for
 // collapse. Skips decay entirely while the actor is already in recovery, so
 // a collapse doesn't just immediately re-trigger itself.
+//
+// Reads needs + the collapse-recovery check as one combined query rather
+// than getNeeds() + getCurrentAction() separately — this runs every single
+// tick for every foreground (non-NPC) entity, so the extra round trip isn't
+// free at scale: a 90-day (129,600-tick) run's per-tick cost here was a
+// real, measured contributor to sql.js's WASM heap exhausting itself before
+// Stage 4's exit test could complete (see population/cadence.ts's header
+// comment and DECISIONS.md's Stage 4 entry for the fuller account — this
+// and actionQueue.ts's removed per-tick progress_ticks write were the two
+// fixes that got a 90-day, ~40-NPC run to actually finish).
 export function tickNeeds(
   db: Database,
   bus: EventBus,
@@ -119,11 +124,19 @@ export function tickNeeds(
   tick: number,
   context: { exposedToCold: boolean },
 ): void {
-  const needs = getNeeds(db, entityId);
-  if (!needs) return;
-
-  const current = getCurrentAction(db, entityId);
-  if (current?.status === 'in_progress' && current.type === COLLAPSE_RECOVERY_ACTION) return;
+  const row = queryRow(
+    db,
+    `SELECT ${NEEDS_COLUMNS},
+       EXISTS(
+         SELECT 1 FROM actions
+         WHERE actor_id = needs.entity_id AND status = 'in_progress' AND type = ?
+       ) AS in_recovery
+     FROM needs WHERE entity_id = ?`,
+    [COLLAPSE_RECOVERY_ACTION, entityId],
+  );
+  if (!row) return;
+  const needs = rowToNeeds(row);
+  if (Number(row[6]) === 1) return;
 
   const next: Record<NeedKey, number> = {
     hunger: clamp(needs.hunger - DECAY_PER_TICK.hunger),

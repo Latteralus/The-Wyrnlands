@@ -118,7 +118,10 @@ export function createBuyActionDefinition(siteId: string, goodType: string): Act
   };
 }
 
-function marketStockContainerId(siteId: string): string {
+// Exported for reuse anywhere else that needs to sell an item into a
+// market's stock outside the player's own sell_<good> timed action — e.g.
+// a household's adaptation ladder (§Stage 4, §10 "sell belongings").
+export function marketStockContainerId(siteId: string): string {
   return `${siteId}-stock`;
 }
 

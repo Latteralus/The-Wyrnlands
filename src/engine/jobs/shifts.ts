@@ -1,6 +1,6 @@
 import { wearCompanyTool } from '../companies/tools';
 import { findFirstActiveItem, produceItem } from '../inventory/items';
-import { transferCoin } from '../inventory/wallet';
+import { getBalance, transferCoin } from '../inventory/wallet';
 import { addXp, getLevel, getSuccessChance } from '../skills/skills';
 import { getActiveEmploymentForSlot, getJobSlot } from './jobs';
 import type { ActionDefinition } from '../actions/types';
@@ -73,15 +73,26 @@ export function createWorkShiftActionDefinition(
       // Presence = labor-ticks = production (§9.8): the wage pays for the
       // shift worked, not piece-rate on the harvest — skill instead governs
       // how much (and how good) that labor actually produces below.
-      transferCoin(
-        ctx.db,
-        ctx.bus,
-        jobSlot.companyId,
-        ctx.actorId,
-        employment.wage,
-        ctx.tick,
-        `${jobSlot.companyName} pays you ${employment.wage} coin for your shift.`,
-      );
+      //
+      // Capped at what the company can actually afford — with §Stage 4's
+      // NPCs now drawing wages from the same company wallet on their own
+      // weekly cadence, an insolvent employer is a real (if rare) outcome,
+      // not just a hypothetical. A worker still shows up and does the work;
+      // an employer that can't pay is harsh but shouldn't crash the game —
+      // same "cap, don't throw" pattern as population/cadence.ts's own
+      // weekly wage payment.
+      const affordableWage = Math.max(0, Math.min(employment.wage, getBalance(ctx.db, jobSlot.companyId)));
+      if (affordableWage > 0) {
+        transferCoin(
+          ctx.db,
+          ctx.bus,
+          jobSlot.companyId,
+          ctx.actorId,
+          affordableWage,
+          ctx.tick,
+          `${jobSlot.companyName} pays you ${affordableWage} coin for your shift.`,
+        );
+      }
 
       const qualityTier = 1 + Math.floor(getLevel(ctx.db, ctx.actorId, jobSlot.skill) / 2);
       const quantity = outcome.success ? GRAIN_YIELD_SUCCESS : GRAIN_YIELD_FAILURE;

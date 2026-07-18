@@ -42,10 +42,15 @@ const LOCATION_CONTENT: Record<string, Omit<LocationContent, 'actions'> & { acti
     description: 'A weathered board nailed to a post, pinned with notices old and new.',
     actions: [{ type: 'read_notices', label: 'Read the notices' }],
   },
+  // §Stage 4: the logging camp's work_shift action lives here too — it
+  // works out of this same forest site rather than a separate location.
   forest: {
     icon: '🌲',
     description: 'The tree line presses close, dense with timber and shadow.',
-    actions: [{ type: 'chop_wood', label: 'Chop wood' }],
+    actions: [
+      { type: 'chop_wood', label: 'Chop wood' },
+      { type: 'work_shift_hollows_edge_logging_woodcutter', label: 'Work a shift (logging camp)' },
+    ],
   },
   market: {
     icon: '🧺',

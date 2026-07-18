@@ -5,6 +5,8 @@ import { migration_0004_inventory_and_audit } from './0004_inventory_and_audit';
 import { migration_0005_survival } from './0005_survival';
 import { migration_0006_action_cancelled_status } from './0006_action_cancelled_status';
 import { migration_0007_jobs_and_companies } from './0007_jobs_and_companies';
+import { migration_0008_npcs_and_households } from './0008_npcs_and_households';
+import { migration_0009_rng_state } from './0009_rng_state';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -19,4 +21,6 @@ export const migrations: Migration[] = [
   migration_0005_survival,
   migration_0006_action_cancelled_status,
   migration_0007_jobs_and_companies,
+  migration_0008_npcs_and_households,
+  migration_0009_rng_state,
 ];

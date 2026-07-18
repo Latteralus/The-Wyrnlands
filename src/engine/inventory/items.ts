@@ -1,7 +1,7 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { withOptional } from '../optional';
 import { incrementGoodsCreated, incrementGoodsDestroyed } from './counters';
-import type { EventBus } from '../eventBus';
+import type { EventBus, EventScope } from '../eventBus';
 import type { DestructionReason, Item, ProvenanceEvent, ProvenanceEventType } from './types';
 import type { Database } from 'sql.js';
 
@@ -97,6 +97,12 @@ export interface ProduceItemParams {
   // produced item starts at full condition instead of NULL (which would
   // read as 0, i.e. already broken).
   durability?: number;
+  // Defaults to 'personal' — right for the player's own items. Background-
+  // simulated NPCs (§Stage 4) pass 'business' so their routine household
+  // transactions don't leak into the player's personal log, which nothing
+  // filters by actor and only ever shows the player's own scope='personal'
+  // feed (see population/cadence.ts's header comment).
+  scope?: EventScope;
 }
 
 export function produceItem(db: Database, bus: EventBus, params: ProduceItemParams): void {
@@ -124,7 +130,7 @@ export function produceItem(db: Database, bus: EventBus, params: ProduceItemPara
     withOptional(
       {
         tick: params.tick,
-        scope: 'personal' as const,
+        scope: params.scope ?? 'personal',
         type: 'item.produced',
         message: params.note ?? `Produced ${params.type}.`,
         data: { itemId: params.id, type: params.type },
@@ -140,7 +146,7 @@ export function transferItem(
   itemId: string,
   toContainerId: string,
   tick: number,
-  options: { actorId?: string; note?: string } = {},
+  options: { actorId?: string; note?: string; scope?: EventScope } = {},
 ): void {
   const item = getItem(db, itemId);
   if (!item) throw new Error(`Unknown item: "${itemId}"`);
@@ -160,7 +166,7 @@ export function transferItem(
     withOptional(
       {
         tick,
-        scope: 'personal' as const,
+        scope: options.scope ?? 'personal',
         type: 'item.transferred',
         message: options.note ?? `Moved ${item.type} to ${toContainerId}.`,
         data: { itemId, from: item.containerId, to: toContainerId },
@@ -176,7 +182,7 @@ export function destroyItem(
   itemId: string,
   reason: DestructionReason,
   tick: number,
-  options: { actorId?: string; note?: string } = {},
+  options: { actorId?: string; note?: string; scope?: EventScope } = {},
 ): void {
   const item = getItem(db, itemId);
   if (!item) throw new Error(`Unknown item: "${itemId}"`);
@@ -196,7 +202,7 @@ export function destroyItem(
     withOptional(
       {
         tick,
-        scope: 'personal' as const,
+        scope: options.scope ?? 'personal',
         type: `item.${reason}`,
         message: options.note ?? `${item.type} was ${reason}.`,
         data: { itemId, type: item.type },

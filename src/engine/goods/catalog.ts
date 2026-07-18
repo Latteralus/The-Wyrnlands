@@ -47,6 +47,9 @@ const GOODS: Record<string, GoodDefinition> = {
   // hoe needs to comfortably outlast a season's worth of shifts rather than
   // strand the job.
   hoe: { type: 'hoe', category: 'tool', weightKg: 3, basePrice: 12, maxDurability: 3000 },
+  // §Stage 4's second employer (the logging camp) — same generous,
+  // outlast-a-season durability reasoning as the farm's hoe.
+  axe: { type: 'axe', category: 'tool', weightKg: 4, basePrice: 14, maxDurability: 3000 },
 };
 
 export function getGoodDefinition(type: string): GoodDefinition {

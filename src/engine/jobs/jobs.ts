@@ -1,6 +1,6 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { addXp, getSuccessChance, TRADING_SKILL } from '../skills/skills';
-import type { EventBus } from '../eventBus';
+import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
 
 // §9.8 job slots: openings (wage band, hours, skill ask, employer,
@@ -16,6 +16,7 @@ export interface JobSlot {
   wageMax: number;
   shiftDurationTicks: number;
   toolGoodType: string | null;
+  capacity: number;
 }
 
 export interface CreateJobSlotParams {
@@ -27,12 +28,13 @@ export interface CreateJobSlotParams {
   wageMax: number;
   shiftDurationTicks: number;
   toolGoodType?: string;
+  capacity?: number;
 }
 
 export function createJobSlot(db: Database, params: CreateJobSlotParams): void {
   db.run(
-    `INSERT INTO job_slots (id, company_id, title, skill, wage_min, wage_max, shift_duration_ticks, tool_good_type)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO job_slots (id, company_id, title, skill, wage_min, wage_max, shift_duration_ticks, tool_good_type, capacity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       params.id,
       params.companyId,
@@ -42,12 +44,13 @@ export function createJobSlot(db: Database, params: CreateJobSlotParams): void {
       params.wageMax,
       params.shiftDurationTicks,
       params.toolGoodType ?? null,
+      params.capacity ?? 1,
     ],
   );
 }
 
 const JOB_SLOT_COLUMNS = `job_slots.id, job_slots.company_id, companies.name, job_slots.title, job_slots.skill,
-  job_slots.wage_min, job_slots.wage_max, job_slots.shift_duration_ticks, job_slots.tool_good_type`;
+  job_slots.wage_min, job_slots.wage_max, job_slots.shift_duration_ticks, job_slots.tool_good_type, job_slots.capacity`;
 const JOB_SLOT_FROM = 'job_slots JOIN companies ON companies.id = job_slots.company_id';
 
 function rowToJobSlot(row: unknown[]): JobSlot {
@@ -61,6 +64,7 @@ function rowToJobSlot(row: unknown[]): JobSlot {
     wageMax: Number(row[6]),
     shiftDurationTicks: Number(row[7]),
     toolGoodType: typeof row[8] === 'string' ? row[8] : null,
+    capacity: Number(row[9]),
   };
 }
 
@@ -128,6 +132,24 @@ export function getActiveEmploymentForSlot(
   return row ? rowToEmployment(row) : null;
 }
 
+// §9.8: a job slot can hold more than one worker, up to its capacity —
+// callers (the Jobs screen, NPC background hiring) check this before
+// attempting to hire rather than relying on applyForJob's hard-stop below.
+export function countActiveEmploymentsForSlot(db: Database, jobSlotId: string): number {
+  const row = queryRow(db, `SELECT COUNT(*) FROM employment WHERE job_slot_id = ? AND status = 'active'`, [
+    jobSlotId,
+  ]);
+  return Number(row?.[0] ?? 0);
+}
+
+export function listActiveEmploymentsForSlot(db: Database, jobSlotId: string): Employment[] {
+  return queryRows(
+    db,
+    `SELECT ${EMPLOYMENT_COLUMNS} FROM employment WHERE job_slot_id = ? AND status = 'active'`,
+    [jobSlotId],
+  ).map(rowToEmployment);
+}
+
 // A haggle attempt costs the applicant nothing on failure (§18: "Harsh ≠
 // opaque") — it just never beats the posted wage. §13.2 "each... attempt
 // grants XP" generalized from labor-ticks to a haggling attempt.
@@ -135,6 +157,11 @@ const HAGGLE_XP = 15;
 
 export interface ApplyForJobOptions {
   haggle: boolean;
+  // Defaults to 'personal' — right for the player's own hire (§Stage 3).
+  // NPC hiring (§Stage 4) passes 'settlement': a hiring is explicitly a
+  // settlement-log category (§14.3), and nothing renders an NPC's
+  // "personal" log, so leaving the default would silently swallow it.
+  scope?: EventScope;
 }
 
 export interface ApplyResult {
@@ -163,6 +190,9 @@ export function applyForJob(
   if (getActiveEmployment(db, entityId)) {
     throw new Error(`"${entityId}" already has a job — quit first.`);
   }
+  if (countActiveEmploymentsForSlot(db, jobSlotId) >= jobSlot.capacity) {
+    throw new Error(`"${jobSlotId}" has no open positions.`);
+  }
 
   let wage = jobSlot.wageMin;
   let haggleSucceeded = false;
@@ -188,7 +218,7 @@ export function applyForJob(
 
   bus.emit({
     tick,
-    scope: 'personal',
+    scope: options.scope ?? 'personal',
     actorId: entityId,
     type: 'job.hired',
     message,
@@ -206,7 +236,23 @@ export function applyForJob(
   return { wage, haggleAttempted: options.haggle, haggleSucceeded, message };
 }
 
-export function quitJob(db: Database, bus: EventBus, entityId: string, tick: number): void {
+export interface QuitJobOptions {
+  // Defaults to 'personal' (§Stage 3's player-initiated quit). §Stage 4's
+  // scripted job loss passes 'settlement' — a job ending is exactly the
+  // kind of NPC life event §14.3 names for that log.
+  scope?: EventScope;
+  // Overrides the default "You leave..." wording — §Stage 4 uses this for
+  // an involuntary dismissal, which reads nothing like a voluntary quit.
+  message?: string;
+}
+
+export function quitJob(
+  db: Database,
+  bus: EventBus,
+  entityId: string,
+  tick: number,
+  options: QuitJobOptions = {},
+): void {
   const employment = getActiveEmployment(db, entityId);
   if (!employment) return;
 
@@ -216,12 +262,15 @@ export function quitJob(db: Database, bus: EventBus, entityId: string, tick: num
   ]);
 
   const jobSlot = getJobSlot(db, employment.jobSlotId);
+  const defaultMessage = jobSlot
+    ? `You leave your position at ${jobSlot.companyName}.`
+    : 'You leave your position.';
   bus.emit({
     tick,
-    scope: 'personal',
+    scope: options.scope ?? 'personal',
     actorId: entityId,
     type: 'job.quit',
-    message: jobSlot ? `You leave your position at ${jobSlot.companyName}.` : 'You leave your position.',
+    message: options.message ?? defaultMessage,
     data: { jobSlotId: employment.jobSlotId },
   });
 }

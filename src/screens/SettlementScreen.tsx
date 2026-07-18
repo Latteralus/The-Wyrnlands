@@ -7,15 +7,18 @@ import type { UiApi } from '../engine/ui-api';
 interface SettlementScreenProps {
   uiApi: UiApi;
   onSelectSite: (siteId: string) => void;
+  onSelectHousehold: (householdId: string) => void;
 }
 
-type Tab = 'locations' | 'log';
+type Tab = 'locations' | 'households' | 'log';
 
 // §5.5 Navigation Model / §Stage 1: "settlement screen with clickable
-// locations (stub panels)... settlement log tab."
-export function SettlementScreen({ uiApi, onSelectSite }: SettlementScreenProps) {
+// locations (stub panels)... settlement log tab." §Stage 4 adds a
+// Households tab (§14.2's household screen needs a way in).
+export function SettlementScreen({ uiApi, onSelectSite, onSelectHousehold }: SettlementScreenProps) {
   const [tab, setTab] = useState<Tab>('locations');
   const sites = uiApi.listSites();
+  const households = uiApi.listHouseholds();
   const calendar = uiApi.getCalendar();
 
   return (
@@ -29,6 +32,13 @@ export function SettlementScreen({ uiApi, onSelectSite }: SettlementScreenProps)
           onClick={() => setTab('locations')}
         >
           Locations
+        </button>
+        <button
+          type="button"
+          className={tab === 'households' ? 'active' : ''}
+          onClick={() => setTab('households')}
+        >
+          Households
         </button>
         <button type="button" className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>
           Settlement Log
@@ -53,6 +63,24 @@ export function SettlementScreen({ uiApi, onSelectSite }: SettlementScreenProps)
               </button>
             );
           })}
+        </div>
+      )}
+
+      {tab === 'households' && (
+        <div className="location-grid">
+          {households.map((household) => (
+            <button
+              key={household.id}
+              type="button"
+              className="location-card"
+              onClick={() => onSelectHousehold(household.id)}
+            >
+              <span className="location-card-icon" aria-hidden="true">
+                🏠
+              </span>
+              <span className="location-card-name">{household.name}</span>
+            </button>
+          ))}
         </div>
       )}
 

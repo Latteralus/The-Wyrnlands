@@ -284,10 +284,46 @@ button {
   opacity: 0.6;
 }
 
+.presence-roster,
 .location-actions {
   display: flex;
   gap: 0.5rem;
   flex-wrap: wrap;
+}
+
+/* --- Households / NPC profile --- */
+
+.household-reserve {
+  font-weight: 600;
+}
+
+.household-members {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.household-members li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.household-member-status {
+  opacity: 0.7;
+  font-size: 0.85rem;
+}
+
+.npc-condition {
+  font-style: italic;
+  opacity: 0.85;
+}
+
+.npc-unemployed {
+  opacity: 0.7;
 }
 
 /* --- Jobs screen --- */

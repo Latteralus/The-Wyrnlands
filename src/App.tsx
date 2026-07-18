@@ -7,12 +7,19 @@ import { Engine } from './engine/engine';
 import { seedDemoWorld, PLAYER_ID } from './engine/seed/demoWorld';
 import { createUiApi, type UiApi } from './engine/ui-api';
 import { useGameClock } from './hooks/useGameClock';
+import { HouseholdScreen } from './screens/HouseholdScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { LocationScreen } from './screens/LocationScreen';
+import { NpcProfileScreen } from './screens/NpcProfileScreen';
 import { SettlementScreen } from './screens/SettlementScreen';
 import './App.css';
 
-type View = { kind: 'settlement' } | { kind: 'location'; siteId: string } | { kind: 'jobs' };
+type View =
+  | { kind: 'settlement' }
+  | { kind: 'location'; siteId: string }
+  | { kind: 'jobs' }
+  | { kind: 'household'; householdId: string }
+  | { kind: 'npc'; entityId: string };
 
 function App() {
   const engineRef = useRef<Engine | null>(null);
@@ -80,11 +87,27 @@ function App() {
               onBack={() => setView({ kind: 'settlement' })}
               onAction={bump}
               onOpenJobs={() => setView({ kind: 'jobs' })}
+              onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
+            />
+          ) : view.kind === 'household' ? (
+            <HouseholdScreen
+              uiApi={uiApi}
+              householdId={view.householdId}
+              onBack={() => setView({ kind: 'settlement' })}
+              onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
+            />
+          ) : view.kind === 'npc' ? (
+            <NpcProfileScreen
+              uiApi={uiApi}
+              entityId={view.entityId}
+              onBack={() => setView({ kind: 'settlement' })}
+              onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
             />
           ) : (
             <SettlementScreen
               uiApi={uiApi}
               onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
+              onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
             />
           )}
         </main>

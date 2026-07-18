@@ -11,6 +11,7 @@ import { runConservationAudit, type AuditResult } from './audit/conservationAudi
 import { createCompany, getCompany, type Company } from './companies/companies';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
+import { getEntity, type Entity } from './entities';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
 import { equipItem, getWornGear, getWornItemInSlot, wearGear, type WornGear } from './gear/gear';
 import { getGoodDefinition } from './goods/catalog';
@@ -30,10 +31,12 @@ import {
   getActiveEmployment,
   listJobOpenings,
   quitJob,
+  type ApplyForJobOptions,
   type ApplyResult,
   type CreateJobSlotParams,
   type Employment,
   type JobSlot,
+  type QuitJobOptions,
 } from './jobs/jobs';
 import { attachLogger, queryLog } from './logs/logger';
 import {
@@ -52,7 +55,18 @@ import {
   type Needs,
   type NeedKey,
 } from './needs/needs';
-import { createRng, hashSeed, type Rng } from './rng';
+import { applyHouseholdDailyCadence, applyNpcLaborWeeklyCadence } from './population/cadence';
+import {
+  addHouseholdMember,
+  createHousehold,
+  getHousehold,
+  getHouseholdIdForMember,
+  listHouseholdMembers,
+  listHouseholds,
+  type Household,
+} from './population/households';
+import { listPresentEntities, type PresentEntity } from './population/presence';
+import { createRng, hashSeed, type SeededRng } from './rng';
 import { addXp, ensureSkill, getLevel, getSuccessChance, getXp } from './skills/skills';
 import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
 import { travelDurationTicks, type TravelConditions } from './world/grid';
@@ -86,12 +100,23 @@ export class Engine {
   readonly db: Database;
   readonly bus = new EventBus();
   readonly actions = new ActionRegistry();
-  private rng: Rng;
+  private rng: SeededRng;
   private detachLogger: () => void;
 
+  // Resumes the RNG from wherever it left off (world_meta.rng_state) rather
+  // than always re-deriving it from the seed string — a brand-new world has
+  // no saved state yet (the row doesn't exist until ensureWorldMeta below
+  // inserts it), so this only ever takes effect for a DB that already has
+  // one: a reload, or a checkpoint/rehydration cycle (checkpoint.ts). Without
+  // this, either path would silently restart the draw sequence from the
+  // beginning, breaking §4.2's "same DB + same seed = same result" guarantee
+  // the moment any more ticks ran afterward — confirmed as a real, not just
+  // theoretical, gap once checkpoint/rehydration made it load-bearing.
   private constructor(db: Database, seed: string) {
     this.db = db;
-    this.rng = createRng(hashSeed(seed));
+    const row = queryRow(db, 'SELECT rng_state FROM world_meta WHERE id = 1');
+    const savedState = typeof row?.[0] === 'number' ? row[0] : null;
+    this.rng = createRng(savedState ?? hashSeed(seed));
     this.detachLogger = attachLogger(db, this.bus);
     registerCollapseRecoveryAction(this.actions);
   }
@@ -159,9 +184,19 @@ export class Engine {
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
     this.applyNeedsCadence(nextTick);
     this.processActiveActions(nextTick);
-    // Further cadence hooks (market, households, ...) attach here as each
-    // module lands — see MASTERPLAN.md §4.2.
+
+    // §4.2's staggered cadence: daily (household budgets) → weekly
+    // (hiring/wages) → nightly (conservation audit). NPCs' entire economic
+    // footprint (feeding, wages, skill gain, production) lives in these
+    // coarse per-household/per-employment passes rather than the player's
+    // per-tick action-queue machinery — see population/cadence.ts's header
+    // comment for why that split is load-bearing, not cosmetic.
     if (nextTick % MINUTES_PER_DAY === 0) {
+      const exposedToCold = deriveCalendar(nextTick).season === 'winter';
+      applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold);
+      if ((nextTick / MINUTES_PER_DAY) % 7 === 0) {
+        applyNpcLaborWeeklyCadence(this.db, this.bus, nextTick);
+      }
       runConservationAudit(this.db, this.bus, nextTick);
     }
   }
@@ -178,9 +213,18 @@ export class Engine {
 
   // Needs decay before actions resolve each tick, so an action that
   // completes this same tick sees the tick's own decay applied first.
+  // Excludes household members (NPCs) — confirmed empirically that this
+  // per-tick, per-entity path cannot scale past a handful of entities (see
+  // population/cadence.ts's header comment); NPCs' needs are handled by the
+  // daily household cadence instead.
   private applyNeedsCadence(currentTick: number): void {
     const season = deriveCalendar(currentTick).season;
-    const rows = queryRows(this.db, 'SELECT entity_id FROM needs ORDER BY entity_id ASC');
+    const rows = queryRows(
+      this.db,
+      `SELECT entity_id FROM needs
+       WHERE entity_id NOT IN (SELECT entity_id FROM household_members)
+       ORDER BY entity_id ASC`,
+    );
     for (const row of rows) {
       const entityId = String(row[0]);
       const body = getWornItemInSlot(this.db, entityId, 'body');
@@ -251,14 +295,18 @@ export class Engine {
     produceItem(this.db, this.bus, { ...params, tick: params.tick ?? this.tick });
   }
 
-  transferItem(itemId: string, toContainerId: string, options?: { actorId?: string; note?: string }): void {
+  transferItem(
+    itemId: string,
+    toContainerId: string,
+    options?: { actorId?: string; note?: string; scope?: EventScope },
+  ): void {
     transferItem(this.db, this.bus, itemId, toContainerId, this.tick, options);
   }
 
   destroyItem(
     itemId: string,
     reason: DestructionReason,
-    options?: { actorId?: string; note?: string },
+    options?: { actorId?: string; note?: string; scope?: EventScope },
   ): void {
     destroyItem(this.db, this.bus, itemId, reason, this.tick, options);
   }
@@ -279,16 +327,22 @@ export class Engine {
     return getBalance(this.db, ownerId);
   }
 
-  faucetCoin(ownerId: string, amount: number, note?: string): void {
-    faucetCoin(this.db, this.bus, ownerId, amount, this.tick, note);
+  faucetCoin(ownerId: string, amount: number, note?: string, scope?: EventScope): void {
+    faucetCoin(this.db, this.bus, ownerId, amount, this.tick, note, scope);
   }
 
-  sinkCoin(ownerId: string, amount: number, note?: string): void {
-    sinkCoin(this.db, this.bus, ownerId, amount, this.tick, note);
+  sinkCoin(ownerId: string, amount: number, note?: string, scope?: EventScope): void {
+    sinkCoin(this.db, this.bus, ownerId, amount, this.tick, note, scope);
   }
 
-  transferCoin(fromOwnerId: string, toOwnerId: string, amount: number, note?: string): void {
-    transferCoin(this.db, this.bus, fromOwnerId, toOwnerId, amount, this.tick, note);
+  transferCoin(
+    fromOwnerId: string,
+    toOwnerId: string,
+    amount: number,
+    note?: string,
+    scope?: EventScope,
+  ): void {
+    transferCoin(this.db, this.bus, fromOwnerId, toOwnerId, amount, this.tick, note, scope);
   }
 
   runConservationAudit(): AuditResult {
@@ -389,12 +443,54 @@ export class Engine {
     return getActiveEmployment(this.db, entityId);
   }
 
-  applyForJob(entityId: string, jobSlotId: string, options: { haggle: boolean }): ApplyResult {
+  applyForJob(entityId: string, jobSlotId: string, options: ApplyForJobOptions): ApplyResult {
     return applyForJob(this.db, this.bus, entityId, jobSlotId, this.tick, options, () => this.nextRandom());
   }
 
-  quitJob(entityId: string): void {
-    quitJob(this.db, this.bus, entityId, this.tick);
+  quitJob(entityId: string, options?: QuitJobOptions): void {
+    quitJob(this.db, this.bus, entityId, this.tick, options);
+  }
+
+  // --- Population: households & NPCs (§10, §11, §Stage 4) ---
+
+  // A household is also an entities row (its own wallet/inventory owner),
+  // same as a company — see population/households.ts's header comment.
+  createHousehold(household: Household): void {
+    this.createEntity(household.id, household.name);
+    createHousehold(this.db, household);
+    this.ensureWallet(household.id);
+  }
+
+  getHousehold(id: string): Household | null {
+    return getHousehold(this.db, id);
+  }
+
+  listHouseholds(): Household[] {
+    return listHouseholds(this.db);
+  }
+
+  addHouseholdMember(householdId: string, entityId: string): void {
+    addHouseholdMember(this.db, householdId, entityId);
+  }
+
+  listHouseholdMembers(householdId: string): string[] {
+    return listHouseholdMembers(this.db, householdId);
+  }
+
+  getHouseholdIdForMember(entityId: string): string | null {
+    return getHouseholdIdForMember(this.db, entityId);
+  }
+
+  getEntity(id: string): Entity | null {
+    return getEntity(this.db, id);
+  }
+
+  // §14.2 location panels' "presence roster" (§Stage 4's hourly version —
+  // see population/presence.ts's header comment for why this is a
+  // deterministic lookup, not simulated movement).
+  listPresentEntities(siteId: string): PresentEntity[] {
+    const hourOfDay = Math.floor(this.calendar.minuteOfDay / 60);
+    return listPresentEntities(this.db, siteId, hourOfDay);
   }
 
   // --- Inventory capacity (§14.2) ---
@@ -415,7 +511,14 @@ export class Engine {
     return this.rng();
   }
 
+  // Syncs the RNG's current state into world_meta first — a plain per-call
+  // write, not a per-tick one, so this doesn't reintroduce the per-tick DB
+  // write cost actionQueue.ts's progress_ticks fix just removed. Without
+  // this, the exported bytes would resume (on rehydration) from whatever
+  // rng_state was last written at *construction* time, not from here —
+  // silently replaying draws that already happened.
   export(): Uint8Array {
+    this.db.run('UPDATE world_meta SET rng_state = ? WHERE id = 1', [this.rng.getState()]);
     return exportDatabase(this.db);
   }
 

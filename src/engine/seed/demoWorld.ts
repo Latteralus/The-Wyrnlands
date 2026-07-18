@@ -3,14 +3,16 @@ import { findFirstActiveItem } from '../inventory/items';
 import { createWorkShiftActionDefinition } from '../jobs/shifts';
 import { createBuyActionDefinition, createSellActionDefinition } from '../market/market';
 import { withOptional } from '../optional';
-import { FARMING_SKILL, LABOR_SKILL } from '../skills/skills';
+import { generateNpcPopulation } from '../population/npcGen';
+import { FARMING_SKILL, LABOR_SKILL, WOODCUTTING_SKILL } from '../skills/skills';
 import type { Engine } from '../engine';
 
 // This seeds just enough world for every screen to have real data: a real
 // survival loop (gather firewood on common land, sell it, buy bread, drink
-// for free at the well, rest, replace gear as it wears out — Stage 2) plus,
-// from Stage 3, a real first job (the farm as employer — §Stage 3). Replaced
-// by real rolled starting conditions in Stage 5 (§5.4).
+// for free at the well, rest, replace gear as it wears out — Stage 2), a
+// real first job (the farm as employer — §Stage 3), and, from Stage 4, a
+// living settlement of ~40 NPCs in households. Replaced by real rolled
+// starting conditions in Stage 5 (§5.4).
 export const PLAYER_ID = 'player';
 
 export const REST_BUNK_PRICE = 3;
@@ -24,7 +26,27 @@ export const FARM_JOB_SLOT_ID = 'oster_farm_farmhand';
 export const FARM_SHIFT_DURATION_TICKS = 360; // a six-hour shift (§14.4)
 const FARM_WAGE_MIN = 3;
 const FARM_WAGE_MAX = 6;
-const FARM_STARTING_CAPITAL = 300; // placeholder existing capital, same spirit as the player's own starting coin
+// Sized for up to FARM_JOB_CAPACITY workers' wages over a full 90-day season
+// with zero revenue — companies don't sell their output yet (no mill/bakery
+// chain until Stage 5), so this is a one-way drain by design. Generous
+// headroom rather than a tightly-balanced number (§17's balance harness is
+// the place for real tuning); a company that outlives Stage 4's exit test
+// but would eventually go insolvent over a longer run is a realistic
+// outcome (§11.5), not a bug — see shifts.ts's affordableWage cap for what
+// happens when it does.
+const FARM_STARTING_CAPITAL = 2500;
+const FARM_JOB_CAPACITY = 3; // room for the player plus a couple of NPC farmhands
+
+export const LOGGING_SITE_ID = 'forest'; // the camp works out of the existing forest site, no new location needed
+export const LOGGING_COMPANY_ID = 'hollows_edge_logging';
+export const LOGGING_JOB_SLOT_ID = 'hollows_edge_logging_woodcutter';
+const LOGGING_SHIFT_DURATION_TICKS = 360;
+const LOGGING_WAGE_MIN = 3;
+const LOGGING_WAGE_MAX = 6;
+const LOGGING_STARTING_CAPITAL = 2500;
+const LOGGING_JOB_CAPACITY = 3;
+
+export const NPC_HOUSEHOLD_COUNT = 20;
 
 // Action *definitions* are code, held only in the ActionRegistry in memory
 // (§Stage 0 decision) — they never persist to the DB. A reloaded save (or,
@@ -138,6 +160,9 @@ export function registerDemoActionTypes(engine: Engine): void {
   engine.registerActionType(
     createWorkShiftActionDefinition(FARM_JOB_SLOT_ID, { durationTicks: FARM_SHIFT_DURATION_TICKS }),
   );
+  engine.registerActionType(
+    createWorkShiftActionDefinition(LOGGING_JOB_SLOT_ID, { durationTicks: LOGGING_SHIFT_DURATION_TICKS }),
+  );
 }
 
 export function seedDemoWorld(engine: Engine): void {
@@ -167,7 +192,11 @@ export function seedDemoWorld(engine: Engine): void {
   });
   engine.equipItem(PLAYER_ID, 'player-starting-shoes');
 
-  engine.seedMarketListing('market', 'bread', 2, 500);
+  // Bread stock is sized for the whole settlement (§Stage 4's ~40 NPCs plus
+  // the player), not just one person — 500 (Stage 2's number) was tuned
+  // for a single actor and would run the market dry well inside a 90-day
+  // run at this population scale.
+  engine.seedMarketListing('market', 'bread', 2, 6000);
   engine.seedMarketListing('market', 'shoes', 15, 20);
   engine.seedMarketListing('market', 'cloak', 25, 10);
   engine.seedMarketListing('market', 'firewood', 3, 0);
@@ -200,5 +229,60 @@ export function seedDemoWorld(engine: Engine): void {
     wageMax: FARM_WAGE_MAX,
     shiftDurationTicks: FARM_SHIFT_DURATION_TICKS,
     toolGoodType: 'hoe',
+    capacity: FARM_JOB_CAPACITY,
+  });
+
+  // §Stage 4: a second employer — variety in the labor market, and gives
+  // households somewhere else to find work if the farm is full. Works out
+  // of the existing forest site (created above) rather than a new location.
+  engine.createCompany({
+    id: LOGGING_COMPANY_ID,
+    name: "Hollow's Edge Logging Camp",
+    kind: 'logging',
+    siteId: LOGGING_SITE_ID,
+  });
+  engine.faucetCoin(
+    LOGGING_COMPANY_ID,
+    LOGGING_STARTING_CAPITAL,
+    "The camp's existing capital, built up over past seasons.",
+  );
+  engine.produceItem(
+    withOptional(
+      {
+        id: `${LOGGING_COMPANY_ID}-axe-1`,
+        type: 'axe',
+        containerId: LOGGING_COMPANY_ID,
+        note: "The camp's own axe, handed to whoever's on shift.",
+      },
+      { durability: getGoodDefinition('axe').maxDurability },
+    ),
+  );
+  engine.createJobSlot({
+    id: LOGGING_JOB_SLOT_ID,
+    companyId: LOGGING_COMPANY_ID,
+    title: 'Woodcutter',
+    skill: WOODCUTTING_SKILL,
+    wageMin: LOGGING_WAGE_MIN,
+    wageMax: LOGGING_WAGE_MAX,
+    shiftDurationTicks: LOGGING_SHIFT_DURATION_TICKS,
+    toolGoodType: 'axe',
+    capacity: LOGGING_JOB_CAPACITY,
+  });
+
+  // §Stage 4: ~40 NPCs in households (§5.3's "one town, ~40-80 persistent
+  // NPCs"). Leaves one farmhand slot open for the player to compete for
+  // (§14.4's "crowded labor market" is a feature, not an oversight).
+  generateNpcPopulation(engine, {
+    householdCount: NPC_HOUSEHOLD_COUNT,
+    minMembersPerHousehold: 1,
+    maxMembersPerHousehold: 3,
+    homeSiteId: 'tavern', // no dedicated housing sites yet (§12 Housing is a later module) — the tavern stands in as "town center"
+    jobSlotIdsToFill: [
+      FARM_JOB_SLOT_ID,
+      FARM_JOB_SLOT_ID,
+      LOGGING_JOB_SLOT_ID,
+      LOGGING_JOB_SLOT_ID,
+      LOGGING_JOB_SLOT_ID,
+    ],
   });
 }

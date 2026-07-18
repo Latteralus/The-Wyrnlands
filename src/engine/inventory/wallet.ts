@@ -1,6 +1,6 @@
 import { queryRow } from '../db/sqlite';
 import { incrementCoinFaucetTotal, incrementCoinSinkTotal } from './counters';
-import type { EventBus } from '../eventBus';
+import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
 
 export function ensureWallet(db: Database, ownerId: string): void {
@@ -27,6 +27,7 @@ export function faucetCoin(
   amount: number,
   tick: number,
   note?: string,
+  scope: EventScope = 'personal',
 ): void {
   if (amount <= 0) throw new Error(`faucetCoin amount must be positive, got ${amount}`);
   ensureWallet(db, ownerId);
@@ -34,7 +35,7 @@ export function faucetCoin(
   incrementCoinFaucetTotal(db, amount);
   bus.emit({
     tick,
-    scope: 'personal',
+    scope,
     actorId: ownerId,
     type: 'coin.faucet',
     message: note ?? `${ownerId} received ${amount} coin from outside the economy.`,
@@ -51,6 +52,7 @@ export function sinkCoin(
   amount: number,
   tick: number,
   note?: string,
+  scope: EventScope = 'personal',
 ): void {
   if (amount <= 0) throw new Error(`sinkCoin amount must be positive, got ${amount}`);
   const balance = getBalance(db, ownerId);
@@ -61,7 +63,7 @@ export function sinkCoin(
   incrementCoinSinkTotal(db, amount);
   bus.emit({
     tick,
-    scope: 'personal',
+    scope,
     actorId: ownerId,
     type: 'coin.sink',
     message: note ?? `${ownerId} paid ${amount} coin out of the economy.`,
@@ -79,6 +81,7 @@ export function transferCoin(
   amount: number,
   tick: number,
   note?: string,
+  scope: EventScope = 'personal',
 ): void {
   if (amount <= 0) throw new Error(`transferCoin amount must be positive, got ${amount}`);
   const balance = getBalance(db, fromOwnerId);
@@ -92,7 +95,7 @@ export function transferCoin(
 
   bus.emit({
     tick,
-    scope: 'personal',
+    scope,
     actorId: fromOwnerId,
     type: 'coin.transferred',
     message: note ?? `${fromOwnerId} paid ${toOwnerId} ${amount} coin.`,

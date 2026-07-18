@@ -87,8 +87,12 @@ describe('Stage 3 — First Job scenarios', () => {
     const hoe = findFirstActiveItem(engine.db, 'oster_farm', 'hoe');
     expect(hoe).not.toBeNull(); // durable enough to survive a single shift's wear
 
+    // The shift's skill check is a real probabilistic roll (§13.2) — wage,
+    // XP, and grain all land regardless of which way it goes (only the
+    // grain *quantity* differs, already covered above), so the action's
+    // terminal status here is either resolved outcome, not just 'complete'.
     const action = engine.getActorActions(PLAYER_ID).find((a) => a.type === WORK_SHIFT_TYPE);
-    expect(action?.status).toBe('complete');
+    expect(['complete', 'failed']).toContain(action?.status);
 
     engine.dispose();
   });
