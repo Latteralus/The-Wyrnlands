@@ -7,11 +7,12 @@ import { Engine } from './engine/engine';
 import { seedDemoWorld, PLAYER_ID } from './engine/seed/demoWorld';
 import { createUiApi, type UiApi } from './engine/ui-api';
 import { useGameClock } from './hooks/useGameClock';
+import { JobsScreen } from './screens/JobsScreen';
 import { LocationScreen } from './screens/LocationScreen';
 import { SettlementScreen } from './screens/SettlementScreen';
 import './App.css';
 
-type View = { kind: 'settlement' } | { kind: 'location'; siteId: string };
+type View = { kind: 'settlement' } | { kind: 'location'; siteId: string } | { kind: 'jobs' };
 
 function App() {
   const engineRef = useRef<Engine | null>(null);
@@ -64,18 +65,26 @@ function App() {
 
       <div className="game-body">
         <main className="game-main">
-          {view.kind === 'settlement' || !site ? (
-            <SettlementScreen
+          {view.kind === 'jobs' ? (
+            <JobsScreen
               uiApi={uiApi}
-              onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
+              playerId={PLAYER_ID}
+              onBack={() => setView({ kind: 'settlement' })}
+              onAction={bump}
             />
-          ) : (
+          ) : view.kind === 'location' && site ? (
             <LocationScreen
               uiApi={uiApi}
               site={site}
               playerId={PLAYER_ID}
               onBack={() => setView({ kind: 'settlement' })}
               onAction={bump}
+              onOpenJobs={() => setView({ kind: 'jobs' })}
+            />
+          ) : (
+            <SettlementScreen
+              uiApi={uiApi}
+              onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
             />
           )}
         </main>

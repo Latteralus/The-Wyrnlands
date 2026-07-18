@@ -38,6 +38,15 @@ const GOODS: Record<string, GoodDefinition> = {
     warmth: 40,
     slot: 'body',
   },
+  // §7.2 v1 essential goods — harvested by farm shift labor (Stage 3), not
+  // yet millable into flour (that chain arrives Stage 5).
+  grain: { type: 'grain', category: 'material', weightKg: 1, basePrice: 1 },
+  // Company-owned (§9.4), not a person's worn gear — no `slot`. Durability
+  // is generous on purpose: company equipment *purchasing* (replacing a
+  // broken tool) is explicitly Stage 5 (§15), so Stage 3's single seeded
+  // hoe needs to comfortably outlast a season's worth of shifts rather than
+  // strand the job.
+  hoe: { type: 'hoe', category: 'tool', weightKg: 3, basePrice: 12, maxDurability: 3000 },
 };
 
 export function getGoodDefinition(type: string): GoodDefinition {

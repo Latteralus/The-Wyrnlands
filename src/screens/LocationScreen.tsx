@@ -8,6 +8,7 @@ interface LocationScreenProps {
   playerId: string;
   onBack: () => void;
   onAction: () => void;
+  onOpenJobs: () => void;
 }
 
 // Market actions are named buy_<good>/sell_<good> (market/market.ts) — used
@@ -19,13 +20,20 @@ function marketGoodType(actionType: string): string | null {
   return null;
 }
 
+// work_shift_<jobSlotId> actions (jobs/shifts.ts) — same "parse the action
+// type for a display hint" precedent as marketGoodType above.
+function workShiftJobSlotId(actionType: string): string | null {
+  return actionType.startsWith('work_shift_') ? actionType.slice('work_shift_'.length) : null;
+}
+
 // §5.5 Location panels: "illustration, atmospheric description (conditional
 // on season/scarcity/time), presence roster, available actions." Presence
 // rosters stay a stub until NPCs exist (Stage 4).
-export function LocationScreen({ uiApi, site, playerId, onBack, onAction }: LocationScreenProps) {
+export function LocationScreen({ uiApi, site, playerId, onBack, onAction, onOpenJobs }: LocationScreenProps) {
   const calendar = uiApi.getCalendar();
   const content = getLocationContent(site.kind);
   const listings = uiApi.listMarketListings(site.id);
+  const employment = uiApi.getEmployment(playerId);
 
   const handleAction = (type: string) => {
     uiApi.queueAction(playerId, type);
@@ -45,15 +53,29 @@ export function LocationScreen({ uiApi, site, playerId, onBack, onAction }: Loca
       <h3>{"Who's here"}</h3>
       <p className="presence-roster-stub">You are here. NPCs arrive in Stage 4.</p>
 
+      {site.kind === 'notice_board' && (
+        <button type="button" onClick={onOpenJobs}>
+          Browse job openings →
+        </button>
+      )}
+
       <h3>What you can do</h3>
       <div className="location-actions">
         {content.actions.map((action) => {
           const good = marketGoodType(action.type);
           const listing = good ? listings.find((l) => l.goodType === good) : undefined;
+          const jobSlotId = workShiftJobSlotId(action.type);
+          const jobHint =
+            jobSlotId === null
+              ? null
+              : employment && employment.jobSlotId === jobSlotId
+                ? ` (wage ${employment.wage} coin/shift)`
+                : ` (you don't work here)`;
           return (
             <button key={action.type} type="button" onClick={() => handleAction(action.type)}>
               {action.label}
               {listing && ` (${listing.price} coin, ${listing.quantity} in stock)`}
+              {jobHint}
             </button>
           );
         })}

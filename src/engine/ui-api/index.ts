@@ -2,12 +2,25 @@ import type { QueuedAction } from '../actions/types';
 import type { Engine } from '../engine';
 import type { EngineEvent, EventScope } from '../eventBus';
 import type { WornGear } from '../gear/gear';
+import type { ApplyResult, Employment, JobSlot } from '../jobs/jobs';
 import type { MarketListing } from '../market/market';
 import type { Needs } from '../needs/needs';
 import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
 
-export type { EngineEvent, EventScope, QueuedAction, Calendar, Site, Needs, WornGear, MarketListing };
+export type {
+  EngineEvent,
+  EventScope,
+  QueuedAction,
+  Calendar,
+  Site,
+  Needs,
+  WornGear,
+  MarketListing,
+  JobSlot,
+  Employment,
+  ApplyResult,
+};
 export { MINUTES_PER_DAY } from '../time/clock';
 
 /**
@@ -31,6 +44,10 @@ export interface UiApi {
   getNeeds(entityId: string): Needs | null;
   getWornGear(entityId: string): WornGear[];
   listMarketListings(siteId: string): MarketListing[];
+  listJobOpenings(): JobSlot[];
+  getEmployment(entityId: string): Employment | null;
+  applyForJob(entityId: string, jobSlotId: string, haggle: boolean): ApplyResult;
+  quitJob(entityId: string): void;
 }
 
 export function createUiApi(engine: Engine): UiApi {
@@ -50,5 +67,9 @@ export function createUiApi(engine: Engine): UiApi {
     getNeeds: (entityId) => engine.getNeeds(entityId),
     getWornGear: (entityId) => engine.getWornGear(entityId),
     listMarketListings: (siteId) => engine.listMarketListings(siteId),
+    listJobOpenings: () => engine.listJobOpenings(),
+    getEmployment: (entityId) => engine.getEmployment(entityId),
+    applyForJob: (entityId, jobSlotId, haggle) => engine.applyForJob(entityId, jobSlotId, { haggle }),
+    quitJob: (entityId) => engine.quitJob(entityId),
   };
 }

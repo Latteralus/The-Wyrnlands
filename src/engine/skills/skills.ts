@@ -1,10 +1,12 @@
 import { queryRow } from '../db/sqlite';
 import type { Database } from 'sql.js';
 
-// v1 skill list (§13.2). Only "labor" is used before jobs/production exist
-// (Stage 3+); this module is generic over any skill name so trade skills
-// slot in later without a schema change.
+// v1 skill list (§13.2). This module is generic over any skill name, so
+// trade skills slot in without a schema change — these are just the named
+// constants in use so far, typo-safety over an enum.
 export const LABOR_SKILL = 'labor';
+export const FARMING_SKILL = 'farming';
+export const TRADING_SKILL = 'trading'; // §9.8/§13.2: margins + haggling
 
 // Steep, learn-by-doing requirements (§13.2 "requirements grow steeply").
 // Placeholder curve — revisit with the balance harness (§17) once the harsh-

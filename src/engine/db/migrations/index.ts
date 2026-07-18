@@ -4,6 +4,7 @@ import { migration_0003_sites } from './0003_sites';
 import { migration_0004_inventory_and_audit } from './0004_inventory_and_audit';
 import { migration_0005_survival } from './0005_survival';
 import { migration_0006_action_cancelled_status } from './0006_action_cancelled_status';
+import { migration_0007_jobs_and_companies } from './0007_jobs_and_companies';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -17,4 +18,5 @@ export const migrations: Migration[] = [
   migration_0004_inventory_and_audit,
   migration_0005_survival,
   migration_0006_action_cancelled_status,
+  migration_0007_jobs_and_companies,
 ];

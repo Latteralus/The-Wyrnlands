@@ -1,20 +1,30 @@
 import { getGoodDefinition } from '../goods/catalog';
 import { findFirstActiveItem } from '../inventory/items';
+import { createWorkShiftActionDefinition } from '../jobs/shifts';
 import { createBuyActionDefinition, createSellActionDefinition } from '../market/market';
-import { LABOR_SKILL } from '../skills/skills';
+import { withOptional } from '../optional';
+import { FARMING_SKILL, LABOR_SKILL } from '../skills/skills';
 import type { Engine } from '../engine';
 
-// No jobs/production yet (those are Stage 3+) — this seeds just enough world
-// for every screen to have real data and, from Stage 2 on, a real survival
-// loop: gather firewood on common land, sell it, buy bread, drink for free
-// at the well, rest, replace gear as it wears out. Replaced by real rolled
-// starting conditions in Stage 5 (§5.4).
+// This seeds just enough world for every screen to have real data: a real
+// survival loop (gather firewood on common land, sell it, buy bread, drink
+// for free at the well, rest, replace gear as it wears out — Stage 2) plus,
+// from Stage 3, a real first job (the farm as employer — §Stage 3). Replaced
+// by real rolled starting conditions in Stage 5 (§5.4).
 export const PLAYER_ID = 'player';
 
 export const REST_BUNK_PRICE = 3;
 const REST_BUNK_ENERGY = 50;
 const REST_ROUGH_ENERGY = 20;
 const SHOE_WEAR_PER_CHOP = 10; // maxDurability 200 → wears out roughly every 20 chops
+
+export const FARM_SITE_ID = 'farm';
+export const FARM_COMPANY_ID = 'oster_farm';
+export const FARM_JOB_SLOT_ID = 'oster_farm_farmhand';
+export const FARM_SHIFT_DURATION_TICKS = 360; // a six-hour shift (§14.4)
+const FARM_WAGE_MIN = 3;
+const FARM_WAGE_MAX = 6;
+const FARM_STARTING_CAPITAL = 300; // placeholder existing capital, same spirit as the player's own starting coin
 
 // Action *definitions* are code, held only in the ActionRegistry in memory
 // (§Stage 0 decision) — they never persist to the DB. A reloaded save (or,
@@ -124,6 +134,10 @@ export function registerDemoActionTypes(engine: Engine): void {
   engine.registerActionType(createBuyActionDefinition('market', 'shoes'));
   engine.registerActionType(createBuyActionDefinition('market', 'cloak'));
   engine.registerActionType(createSellActionDefinition('market', 'firewood'));
+
+  engine.registerActionType(
+    createWorkShiftActionDefinition(FARM_JOB_SLOT_ID, { durationTicks: FARM_SHIFT_DURATION_TICKS }),
+  );
 }
 
 export function seedDemoWorld(engine: Engine): void {
@@ -157,4 +171,34 @@ export function seedDemoWorld(engine: Engine): void {
   engine.seedMarketListing('market', 'shoes', 15, 20);
   engine.seedMarketListing('market', 'cloak', 25, 10);
   engine.seedMarketListing('market', 'firewood', 3, 0);
+
+  // §Stage 3: the farm as employer.
+  engine.createSite({ id: FARM_SITE_ID, name: 'Oster Farm', kind: 'farm', x: 3, y: -3 });
+  engine.createCompany({ id: FARM_COMPANY_ID, name: 'Oster Farm', kind: 'farm', siteId: FARM_SITE_ID });
+  engine.faucetCoin(
+    FARM_COMPANY_ID,
+    FARM_STARTING_CAPITAL,
+    "The farm's existing capital, built up over past seasons.",
+  );
+  engine.produceItem(
+    withOptional(
+      {
+        id: `${FARM_COMPANY_ID}-hoe-1`,
+        type: 'hoe',
+        containerId: FARM_COMPANY_ID,
+        note: "The farm's own hoe, handed to whoever's on shift.",
+      },
+      { durability: getGoodDefinition('hoe').maxDurability },
+    ),
+  );
+  engine.createJobSlot({
+    id: FARM_JOB_SLOT_ID,
+    companyId: FARM_COMPANY_ID,
+    title: 'Farmhand',
+    skill: FARMING_SKILL,
+    wageMin: FARM_WAGE_MIN,
+    wageMax: FARM_WAGE_MAX,
+    shiftDurationTicks: FARM_SHIFT_DURATION_TICKS,
+    toolGoodType: 'hoe',
+  });
 }

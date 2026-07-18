@@ -15,6 +15,7 @@ describe('applyMigrations', () => {
       '0004_inventory_and_audit',
       '0005_survival',
       '0006_action_cancelled_status',
+      '0007_jobs_and_companies',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -25,10 +26,13 @@ describe('applyMigrations', () => {
       expect.arrayContaining([
         'actions',
         'audits',
+        'companies',
+        'employment',
         'entities',
         'event_log',
         'gear',
         'items',
+        'job_slots',
         'market_listings',
         'needs',
         'provenance_events',

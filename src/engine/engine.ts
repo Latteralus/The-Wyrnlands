@@ -8,6 +8,7 @@ import {
 } from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
 import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
+import { createCompany, getCompany, type Company } from './companies/companies';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
@@ -23,6 +24,17 @@ import {
   type ProduceItemParams,
 } from './inventory/items';
 import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
+import {
+  applyForJob,
+  createJobSlot,
+  getActiveEmployment,
+  listJobOpenings,
+  quitJob,
+  type ApplyResult,
+  type CreateJobSlotParams,
+  type Employment,
+  type JobSlot,
+} from './jobs/jobs';
 import { attachLogger, queryLog } from './logs/logger';
 import {
   decrementStock,
@@ -349,6 +361,40 @@ export class Engine {
 
   decrementMarketStock(siteId: string, goodType: string, quantity: number): void {
     decrementStock(this.db, siteId, goodType, quantity);
+  }
+
+  // --- Companies & jobs (§9, §Stage 3) ---
+
+  // A company is also an entities row (its own wallet/inventory owner),
+  // same as a person — see companies/companies.ts's header comment.
+  createCompany(company: Company): void {
+    this.createEntity(company.id, company.name);
+    createCompany(this.db, company);
+    this.ensureWallet(company.id);
+  }
+
+  getCompany(id: string): Company | null {
+    return getCompany(this.db, id);
+  }
+
+  createJobSlot(params: CreateJobSlotParams): void {
+    createJobSlot(this.db, params);
+  }
+
+  listJobOpenings(): JobSlot[] {
+    return listJobOpenings(this.db);
+  }
+
+  getEmployment(entityId: string): Employment | null {
+    return getActiveEmployment(this.db, entityId);
+  }
+
+  applyForJob(entityId: string, jobSlotId: string, options: { haggle: boolean }): ApplyResult {
+    return applyForJob(this.db, this.bus, entityId, jobSlotId, this.tick, options, () => this.nextRandom());
+  }
+
+  quitJob(entityId: string): void {
+    quitJob(this.db, this.bus, entityId, this.tick);
   }
 
   // --- Inventory capacity (§14.2) ---

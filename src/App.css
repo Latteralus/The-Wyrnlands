@@ -290,6 +290,51 @@ button {
   flex-wrap: wrap;
 }
 
+/* --- Jobs screen --- */
+
+.jobs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.job-card {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+}
+
+.job-card h4 {
+  margin: 0 0 0.35rem;
+}
+
+.job-card p {
+  margin: 0.2rem 0;
+}
+
+.jobs-current {
+  color: var(--accent);
+}
+
+.jobs-blocked {
+  opacity: 0.6;
+}
+
+.job-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.5rem;
+}
+
+.job-actions button {
+  padding: 0.5rem 1rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--accent-bg);
+  cursor: pointer;
+}
+
 /* --- Logs --- */
 
 .log-list {

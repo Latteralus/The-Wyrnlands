@@ -57,6 +57,15 @@ const LOCATION_CONTENT: Record<string, Omit<LocationContent, 'actions'> & { acti
       { type: 'sell_firewood', label: 'Sell firewood' },
     ],
   },
+  // §Stage 3: the action type is tied to the specific job slot the demo
+  // world seeds (oster_farm_farmhand) — same precedent as market's
+  // buy_<good>/sell_<good> actions being tied to the specific seeded stall.
+  farm: {
+    icon: '🌾',
+    description:
+      'Rows of tilled earth stretch toward the tree line; the farmhouse smoke curls into a grey sky.',
+    actions: [{ type: 'work_shift_oster_farm_farmhand', label: 'Work a shift' }],
+  },
 };
 
 export function getLocationContent(kind: string): LocationContent {
