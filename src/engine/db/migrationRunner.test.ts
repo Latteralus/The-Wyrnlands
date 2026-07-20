@@ -18,6 +18,8 @@ describe('applyMigrations', () => {
       '0007_jobs_and_companies',
       '0008_npcs_and_households',
       '0009_rng_state',
+      '0010_production_chains',
+      '0011_company_growth',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -29,6 +31,7 @@ describe('applyMigrations', () => {
         'actions',
         'audits',
         'companies',
+        'company_ledger_entries',
         'employment',
         'entities',
         'event_log',

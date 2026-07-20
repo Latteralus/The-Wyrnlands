@@ -1,14 +1,16 @@
 import { wearCompanyTool } from '../companies/tools';
-import { findFirstActiveItem, produceItem } from '../inventory/items';
+import {
+  consumeActiveItems,
+  countActiveItemsOfType,
+  findFirstActiveItem,
+  produceItem,
+} from '../inventory/items';
 import { getBalance, transferCoin } from '../inventory/wallet';
+import { getRecipeForSkill } from '../production/recipes';
 import { addXp, getLevel, getSuccessChance } from '../skills/skills';
 import { getActiveEmploymentForSlot, getJobSlot } from './jobs';
 import type { ActionDefinition } from '../actions/types';
 
-// Placeholder pacing (flagged like every other unbalanced constant so far —
-// revisit with the balance harness, §17).
-const GRAIN_YIELD_SUCCESS = 4;
-const GRAIN_YIELD_FAILURE = 1; // §13.2: failure wastes time/materials, not the whole shift
 const TOOL_WEAR_PER_SHIFT = 3;
 const SHIFT_XP = 40;
 
@@ -16,7 +18,13 @@ const SHIFT_XP = 40;
 // commit timed shifts; presence = labor-ticks = production"). jobSlotId is
 // baked in like createBuyActionDefinition bakes in (siteId, goodType); the
 // employment/job-slot/tool state itself is looked up live at resolve time,
-// same pattern.
+// same pattern. Production math comes from production/recipes.ts — the
+// same table NPCs' weekly batch (population/cadence.ts) reads — so the
+// player's own shift can never drift out of sync with it the way it used
+// to (this used to hardcode grain-specific yields directly here, which
+// also meant a player working the *logging* job slot silently produced
+// grain instead of firewood — a real latent bug, fixed by this unification,
+// not something Stage 5 introduced).
 export function createWorkShiftActionDefinition(
   jobSlotId: string,
   config: { durationTicks: number },
@@ -94,17 +102,37 @@ export function createWorkShiftActionDefinition(
         );
       }
 
+      const recipe = getRecipeForSkill(jobSlot.skill);
+      if (!recipe) return; // a job slot for a skill with no production recipe (none exist today, but not assumed impossible)
+
       const qualityTier = 1 + Math.floor(getLevel(ctx.db, ctx.actorId, jobSlot.skill) / 2);
-      const quantity = outcome.success ? GRAIN_YIELD_SUCCESS : GRAIN_YIELD_FAILURE;
+      let quantity = outcome.success ? recipe.yieldPerShiftSuccess : recipe.yieldPerShiftFailure;
+
+      if (recipe.inputGood) {
+        const available = countActiveItemsOfType(ctx.db, jobSlot.companyId, recipe.inputGood);
+        const maxByInput = Math.floor(available / recipe.inputUnitsPerOutputUnit);
+        quantity = Math.min(quantity, maxByInput);
+        if (quantity <= 0) return; // no input on hand — the shift's labor produced nothing this time
+        consumeActiveItems(
+          ctx.db,
+          ctx.bus,
+          jobSlot.companyId,
+          recipe.inputGood,
+          quantity * recipe.inputUnitsPerOutputUnit,
+          ctx.tick,
+          { actorId: ctx.actorId, note: `${recipe.inputGood} used at ${jobSlot.companyName}.` },
+        );
+      }
+
       for (let i = 0; i < quantity; i++) {
         produceItem(ctx.db, ctx.bus, {
-          id: `${jobSlot.companyId}-grain-${ctx.tick}-${i}`,
-          type: 'grain',
+          id: `${jobSlot.companyId}-${recipe.outputGood}-${ctx.tick}-${i}`,
+          type: recipe.outputGood,
           qualityTier,
           containerId: jobSlot.companyId,
           tick: ctx.tick,
           actorId: ctx.actorId,
-          note: `Grain harvested at ${jobSlot.companyName}.`,
+          note: `${recipe.outputGood} produced at ${jobSlot.companyName}.`,
         });
       }
     },

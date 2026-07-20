@@ -1,10 +1,25 @@
-import { getCompany } from '../companies/companies';
+import { getCompany, recordLedgerEntry } from '../companies/companies';
+import { getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
-import { destroyItem, findFirstActiveItem, produceItem, transferItem } from '../inventory/items';
+import {
+  consumeActiveItems,
+  countActiveItemsOfType,
+  destroyItem,
+  findFirstActiveItem,
+  produceItem,
+  transferItem,
+} from '../inventory/items';
 import { getBalance, faucetCoin, sinkCoin, transferCoin } from '../inventory/wallet';
-import { listActiveEmploymentsForSlot, listJobOpenings } from '../jobs/jobs';
+import {
+  applyForJob,
+  countActiveEmploymentsForSlot,
+  getActiveEmployment,
+  listActiveEmploymentsForSlot,
+  listJobOpenings,
+} from '../jobs/jobs';
 import { decrementStock, getListing, marketStockContainerId, seedListing } from '../market/market';
 import { clamp, getNeeds, type NeedKey } from '../needs/needs';
+import { getRecipeForSkill } from '../production/recipes';
 import { addXp, getLevel } from '../skills/skills';
 import { listHouseholdMembers, listHouseholds, type Household } from './households';
 import type { EventBus } from '../eventBus';
@@ -77,16 +92,51 @@ function feedHousehold(
   }
 
   if (fedCount < members.length) {
-    const price = getGoodDefinition('bread').basePrice;
     const listing = getListing(db, MARKET_SITE_ID, 'bread');
+    const price = listing?.price ?? getGoodDefinition('bread').basePrice;
     const affordableByCoin = price > 0 ? Math.floor(getBalance(db, household.id) / price) : Infinity;
     const buyCount = Math.max(
       0,
       Math.min(members.length - fedCount, listing?.quantity ?? 0, affordableByCoin),
     );
 
+    // §Stage 5 closed economy: pays the real bakery once one exists and has
+    // sold into this listing (MarketListing.producerCompanyId); otherwise
+    // this is still the §8.1 merchant-faucet import it always was. This is
+    // the dominant bread-buying path in the game (up to NPC_HOUSEHOLD_COUNT
+    // purchases/day vs. the player's occasional one) — closing it, not just
+    // the player's own buy_bread action, is what actually closes the loop.
     for (let i = 0; i < buyCount; i++) {
-      sinkCoin(db, bus, household.id, price, tick, `${household.name} buys bread at the market.`, 'business');
+      if (listing?.producerCompanyId) {
+        transferCoin(
+          db,
+          bus,
+          household.id,
+          listing.producerCompanyId,
+          price,
+          tick,
+          `${household.name} buys bread at the market.`,
+          'business',
+        );
+        recordLedgerEntry(
+          db,
+          listing.producerCompanyId,
+          tick,
+          'revenue',
+          price,
+          `Sold bread to ${household.name}.`,
+        );
+      } else {
+        sinkCoin(
+          db,
+          bus,
+          household.id,
+          price,
+          tick,
+          `${household.name} buys bread at the market.`,
+          'business',
+        );
+      }
       decrementStock(db, MARKET_SITE_ID, 'bread', 1);
       const itemId = `${household.id}-bread-${tick}-${i}`;
       produceItem(db, bus, {
@@ -210,24 +260,18 @@ export function applyHouseholdDailyCadence(
 
 const WEEKLY_SHIFTS = 5; // 5 working days/week — same wage unit as the player's per-shift wage, batched
 const WEEKLY_XP = 200;
-const WEEKLY_YIELD_PER_SHIFT = 3;
-
-// Skill → output good. Stage 3/4 only have two job types; a real data-driven
-// recipe system (§16) is Stage 5+, so this small lookup is the honest
-// stand-in until then, same precedent as the goods catalog itself.
-const SKILL_OUTPUT_GOOD: Record<string, string> = {
-  farming: 'grain',
-  woodcutting: 'firewood',
-};
 
 // §4.2 cadence: "weekly (hiring/wages ...)." Pays every NPC's active
 // employment as one lump sum (§9.8: "presence = labor-ticks = production" —
 // a labor-time wage, same principle as the player's per-shift wage, just
 // batched to a week instead of queued per shift) and grants the matching
-// skill XP/output. The player is excluded — their wages come from real
-// work_shift actions triggered through the interface (§Stage 3), not this
-// cadence; household membership is what distinguishes "NPC" from "player"
-// here (see households.ts's isHouseholdMember).
+// skill XP/output via production/recipes.ts's shared recipe table (§Stage 5
+// unified this with the player's own jobs/shifts.ts, which used to hardcode
+// a separate, slightly different copy of the same "farming -> grain" fact).
+// The player is excluded — their wages come from real work_shift actions
+// triggered through the interface (§Stage 3), not this cadence; household
+// membership is what distinguishes "NPC" from "player" here (see
+// households.ts's isHouseholdMember).
 export function applyNpcLaborWeeklyCadence(db: Database, bus: EventBus, tick: number): void {
   for (const jobSlot of listJobOpenings(db)) {
     for (const employment of listActiveEmploymentsForSlot(db, jobSlot.id)) {
@@ -247,27 +291,121 @@ export function applyNpcLaborWeeklyCadence(db: Database, bus: EventBus, tick: nu
           `${company.name} pays ${affordable} coin in wages.`,
           'business',
         );
+        recordLedgerEntry(db, employment.companyId, tick, 'wage', affordable, 'Weekly wages.');
       }
 
       addXp(db, employment.entityId, jobSlot.skill, WEEKLY_XP);
 
-      const outputGood = SKILL_OUTPUT_GOOD[jobSlot.skill];
-      if (!outputGood) continue;
+      const recipe = getRecipeForSkill(jobSlot.skill);
+      if (!recipe) continue;
       const level = getLevel(db, employment.entityId, jobSlot.skill);
       const qualityTier = 1 + Math.floor(level / 2);
-      const quantity = WEEKLY_SHIFTS * WEEKLY_YIELD_PER_SHIFT;
+      // A week's worth of a single shift-equivalent yield, same shape as
+      // the old WEEKLY_YIELD_PER_SHIFT * WEEKLY_SHIFTS this replaces —
+      // farming/woodcutting's numbers are unchanged (recipe.yieldPerShiftSuccess
+      // === the old constant), so existing Stage 3/4 behavior is preserved
+      // exactly; only milling/baking are new.
+      let quantity = WEEKLY_SHIFTS * recipe.yieldPerShiftSuccess;
+
+      // §Stage 5's real transformation chains (milling, baking) consume an
+      // input good, capped by what the company actually has on hand — no
+      // grain, no flour, however skilled the miller. Farming/woodcutting's
+      // inputGood is null (extraction — §5.2's infinite resource nodes), so
+      // this never caps their output, matching their pre-Stage-5 behavior.
+      if (recipe.inputGood) {
+        const available = countActiveItemsOfType(db, employment.companyId, recipe.inputGood);
+        const maxByInput = Math.floor(available / recipe.inputUnitsPerOutputUnit);
+        quantity = Math.min(quantity, maxByInput);
+        if (quantity <= 0) continue;
+        consumeActiveItems(
+          db,
+          bus,
+          employment.companyId,
+          recipe.inputGood,
+          quantity * recipe.inputUnitsPerOutputUnit,
+          tick,
+          {
+            actorId: employment.entityId,
+            note: `${recipe.inputGood} used at ${company.name}.`,
+            scope: 'business',
+          },
+        );
+      }
+
       for (let i = 0; i < quantity; i++) {
         produceItem(db, bus, {
-          id: `${employment.companyId}-${outputGood}-${tick}-${employment.entityId}-${i}`,
-          type: outputGood,
+          id: `${employment.companyId}-${recipe.outputGood}-${tick}-${employment.entityId}-${i}`,
+          type: recipe.outputGood,
           qualityTier,
           containerId: employment.companyId,
           tick,
           actorId: employment.entityId,
-          note: `${outputGood} produced at ${company.name}.`,
+          note: `${recipe.outputGood} produced at ${company.name}.`,
           scope: 'business',
         });
       }
+    }
+  }
+}
+
+// §10 "the adaptation ladder... more work / another member works" — named
+// in §10 since Stage 4 but explicitly not modeled then (no NPC job-seeking
+// behavior existed yet, see DECISIONS.md's Stage 4 entry). §Stage 5's real
+// company growth (companies/decisions.ts's tryUpgrade) also needs *someone*
+// to actually fill a newly-opened job slot, or "hires" is just a number
+// going up with nobody behind it — this is that someone.
+//
+// Deliberately minimal, not §11.3's full utility-scored decision model
+// (urgency + benefit - cost - risk + personality): every unemployed
+// household member is a candidate for every open slot, no skill-matching,
+// no travel/distance weighting (this settlement has no second location's
+// worth of jobs to weigh against yet). Households currently under
+// financial strain get first pick of scarce openings — the one piece of
+// prioritization that makes this a real adaptation-ladder rung rather than
+// incidental background hiring, and lets it log as one.
+export function applyNpcJobSeekingWeeklyCadence(
+  db: Database,
+  bus: EventBus,
+  tick: number,
+  rng: () => number,
+): void {
+  const remainingCapacity = new Map<string, number>();
+  for (const slot of listJobOpenings(db)) {
+    const remaining = slot.capacity - countActiveEmploymentsForSlot(db, slot.id);
+    if (remaining > 0) remainingCapacity.set(slot.id, remaining);
+  }
+  if (remainingCapacity.size === 0) return;
+
+  const households = listHouseholds(db)
+    .map((household) => ({
+      household,
+      strained: getBalance(db, household.id) < RESERVE_HEALTHY_THRESHOLD,
+    }))
+    .sort((a, b) => Number(b.strained) - Number(a.strained));
+
+  for (const { household, strained } of households) {
+    for (const memberId of listHouseholdMembers(db, household.id)) {
+      if (remainingCapacity.size === 0) return;
+      if (getActiveEmployment(db, memberId)) continue;
+
+      const [slotId] = remainingCapacity.entries().next().value ?? [];
+      if (!slotId) return;
+
+      applyForJob(db, bus, memberId, slotId, tick, { haggle: rng() < 0.5, scope: 'settlement' }, rng);
+      if (strained) {
+        bus.emit({
+          tick,
+          scope: 'settlement',
+          actorId: household.id,
+          type: 'household.hardship.member_works',
+          message: `${getEntityName(db, memberId)} takes on work to help ${household.name} through a hard stretch.`,
+          data: { entityId: memberId, jobSlotId: slotId },
+        });
+      }
+
+      const remaining = (remainingCapacity.get(slotId) ?? 1) - 1;
+      if (remaining <= 0) remainingCapacity.delete(slotId);
+      else remainingCapacity.set(slotId, remaining);
     }
   }
 }

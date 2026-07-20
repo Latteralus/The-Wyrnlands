@@ -9,6 +9,8 @@ export const FARMING_SKILL = 'farming';
 export const TRADING_SKILL = 'trading'; // §9.8/§13.2: margins + haggling
 export const WOODCUTTING_SKILL = 'woodcutting';
 export const MANAGEMENT_SKILL = 'management'; // §9.2: business owners' skill
+export const MILLING_SKILL = 'milling'; // §Stage 5: grain -> flour
+export const BAKING_SKILL = 'baking'; // §Stage 5: flour -> bread
 
 // Steep, learn-by-doing requirements (§13.2 "requirements grow steeply").
 // Placeholder curve — revisit with the balance harness (§17) once the harsh-

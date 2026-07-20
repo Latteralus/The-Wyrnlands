@@ -80,6 +80,23 @@ export function listJobOpenings(db: Database): JobSlot[] {
   );
 }
 
+// §Stage 5: companies/decisions.ts's daily cadence needs to know what a
+// company actually produces/consumes, derived from its job slots' skills
+// (via production/recipes.ts) rather than a separate hand-maintained list.
+export function listJobSlotsForCompany(db: Database, companyId: string): JobSlot[] {
+  return queryRows(
+    db,
+    `SELECT ${JOB_SLOT_COLUMNS} FROM ${JOB_SLOT_FROM} WHERE job_slots.company_id = ? ORDER BY job_slots.id`,
+    [companyId],
+  ).map(rowToJobSlot);
+}
+
+// §9.5 "upgrade tiers expand job slots" — companies/decisions.ts's
+// tryUpgrade is the only caller; it's responsible for the cost/tier side.
+export function setJobSlotCapacity(db: Database, jobSlotId: string, capacity: number): void {
+  db.run('UPDATE job_slots SET capacity = ? WHERE id = ?', [capacity, jobSlotId]);
+}
+
 export interface Employment {
   id: number;
   entityId: string;

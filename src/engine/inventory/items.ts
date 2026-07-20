@@ -40,6 +40,18 @@ export function findFirstActiveItem(db: Database, containerId: string, type: str
   return row ? rowToItem(row) : null;
 }
 
+// §Stage 5: how much of a good a container (typically a company) currently
+// holds — production chains (production/recipes.ts) use this to cap output
+// by available input stock before consuming any of it.
+export function countActiveItemsOfType(db: Database, containerId: string, type: string): number {
+  const row = queryRow(
+    db,
+    `SELECT COUNT(*) FROM items WHERE container_id = ? AND type = ? AND status = 'active'`,
+    [containerId, type],
+  );
+  return Number(row?.[0] ?? 0);
+}
+
 function recordProvenance(
   db: Database,
   params: {
@@ -210,4 +222,33 @@ export function destroyItem(
       { actorId: options.actorId },
     ),
   );
+}
+
+// §Stage 5: consumes up to `quantity` active items of a type out of a
+// container as production inputs (a mill's grain, a bakery's flour) —
+// factored out because production/recipes.ts's two consumers (the player's
+// own work_shift action in jobs/shifts.ts, and NPCs' weekly batch in
+// population/cadence.ts) both need the exact same "destroy N units,
+// individually provenance-logged" loop that feedHousehold (population/
+// cadence.ts) already had a bespoke version of. Returns the actual count
+// consumed, which can be less than requested if stock runs out mid-loop —
+// callers that already capped `quantity` by countActiveItemsOfType shouldn't
+// normally see that happen, but nothing here assumes it can't.
+export function consumeActiveItems(
+  db: Database,
+  bus: EventBus,
+  containerId: string,
+  type: string,
+  quantity: number,
+  tick: number,
+  options: { actorId?: string; note?: string; scope?: EventScope } = {},
+): number {
+  let consumed = 0;
+  for (let i = 0; i < quantity; i++) {
+    const item = findFirstActiveItem(db, containerId, type);
+    if (!item) break;
+    destroyItem(db, bus, item.id, 'consumed', tick, options);
+    consumed++;
+  }
+  return consumed;
 }

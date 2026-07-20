@@ -38,9 +38,15 @@ const GOODS: Record<string, GoodDefinition> = {
     warmth: 40,
     slot: 'body',
   },
-  // §7.2 v1 essential goods — harvested by farm shift labor (Stage 3), not
-  // yet millable into flour (that chain arrives Stage 5).
+  // §7.2 v1 essential goods — harvested by farm shift labor (Stage 3);
+  // millable into flour by Stage 5's real production chain (production/recipes.ts).
   grain: { type: 'grain', category: 'material', weightKg: 1, basePrice: 1 },
+  // §Stage 5: the grain -> flour -> bread chain's middle good. No merchant
+  // import listing of its own — it only ever exists via the mill's real
+  // production (or Riverside Mill's starting stock), unlike bread/grain
+  // which both still carry a merchant-faucet safety buffer (§7.2 "imported
+  // via merchant faucet at first, produced locally as chains come online").
+  flour: { type: 'flour', category: 'material', weightKg: 1, basePrice: 2 },
   // Company-owned (§9.4), not a person's worn gear — no `slot`. Durability
   // is generous on purpose: company equipment *purchasing* (replacing a
   // broken tool) is explicitly Stage 5 (§15), so Stage 3's single seeded

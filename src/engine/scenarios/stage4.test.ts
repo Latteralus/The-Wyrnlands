@@ -6,6 +6,7 @@ import { Engine } from '../engine';
 import { findFirstActiveItem } from '../inventory/items';
 import { listActiveEmploymentsForSlot } from '../jobs/jobs';
 import {
+  COMPANY_OWNER_HOUSEHOLD_COUNT,
   FARM_JOB_SLOT_ID,
   LOGGING_JOB_SLOT_ID,
   NPC_HOUSEHOLD_COUNT,
@@ -50,12 +51,14 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     const engine = Engine.bootstrap(db, { seed: 'stage4-population' });
     seedDemoWorld(engine);
 
+    // §Stage 5 added one single-person household per company owner-operator
+    // (farm, logging, mill, bakery) alongside the generated NPC households.
     const households = engine.listHouseholds();
-    expect(households.length).toBe(NPC_HOUSEHOLD_COUNT);
+    expect(households.length).toBe(NPC_HOUSEHOLD_COUNT + COMPANY_OWNER_HOUSEHOLD_COUNT);
 
     const allMembers = households.flatMap((h) => engine.listHouseholdMembers(h.id));
-    expect(allMembers.length).toBeGreaterThanOrEqual(30);
-    expect(allMembers.length).toBeLessThanOrEqual(60);
+    expect(allMembers.length).toBeGreaterThanOrEqual(30 + COMPANY_OWNER_HOUSEHOLD_COUNT);
+    expect(allMembers.length).toBeLessThanOrEqual(60 + COMPANY_OWNER_HOUSEHOLD_COUNT);
 
     // Every member is a real entity with real needs, not just an id.
     for (const entityId of allMembers.slice(0, 5)) {

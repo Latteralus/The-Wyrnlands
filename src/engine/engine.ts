@@ -8,7 +8,16 @@ import {
 } from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
 import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
-import { createCompany, getCompany, type Company } from './companies/companies';
+import {
+  createCompany,
+  getCompany,
+  listCompanies,
+  setCompanyOwner,
+  summarizeLedger,
+  type Company,
+  type LedgerSummary,
+} from './companies/companies';
+import { applyCompanyDailyCadence } from './companies/decisions';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
 import { getEntity, type Entity } from './entities';
@@ -46,6 +55,7 @@ import {
   seedListing,
   type MarketListing,
 } from './market/market';
+import { driftMarketPrices } from './market/pricing';
 import {
   ensureNeeds,
   getNeeds,
@@ -55,7 +65,11 @@ import {
   type Needs,
   type NeedKey,
 } from './needs/needs';
-import { applyHouseholdDailyCadence, applyNpcLaborWeeklyCadence } from './population/cadence';
+import {
+  applyHouseholdDailyCadence,
+  applyNpcJobSeekingWeeklyCadence,
+  applyNpcLaborWeeklyCadence,
+} from './population/cadence';
 import {
   addHouseholdMember,
   createHousehold,
@@ -194,8 +208,21 @@ export class Engine {
     if (nextTick % MINUTES_PER_DAY === 0) {
       const exposedToCold = deriveCalendar(nextTick).season === 'winter';
       applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold);
+
+      // §Stage 5: smoothed pricing (§8.1 rule 4) and companies' own
+      // Management-weighted daily decisions (§9.6) — restocking inputs
+      // ahead of this week's production below, and selling last week's
+      // output. Both are new-this-stage; households' own cadence above is
+      // unaffected by them.
+      driftMarketPrices(this.db);
+      applyCompanyDailyCadence(this.db, this.bus, nextTick);
+
       if ((nextTick / MINUTES_PER_DAY) % 7 === 0) {
         applyNpcLaborWeeklyCadence(this.db, this.bus, nextTick);
+        // §Stage 5: fills newly-opened job slots (company growth) and
+        // realizes §10's "another member works" adaptation rung — see
+        // population/cadence.ts's header comment on this function.
+        applyNpcJobSeekingWeeklyCadence(this.db, this.bus, nextTick, this.rng);
       }
       runConservationAudit(this.db, this.bus, nextTick);
     }
@@ -421,7 +448,7 @@ export class Engine {
 
   // A company is also an entities row (its own wallet/inventory owner),
   // same as a person — see companies/companies.ts's header comment.
-  createCompany(company: Company): void {
+  createCompany(company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier'>): void {
     this.createEntity(company.id, company.name);
     createCompany(this.db, company);
     this.ensureWallet(company.id);
@@ -429,6 +456,21 @@ export class Engine {
 
   getCompany(id: string): Company | null {
     return getCompany(this.db, id);
+  }
+
+  listCompanies(): Company[] {
+    return listCompanies(this.db);
+  }
+
+  // §9.2: assigns (or reassigns) a company's Management-skilled owner —
+  // separate from createCompany because the owner is usually a distinct NPC
+  // entity created afterward (see seed/demoWorld.ts).
+  setCompanyOwner(companyId: string, ownerId: string): void {
+    setCompanyOwner(this.db, companyId, ownerId);
+  }
+
+  getCompanyLedgerSummary(companyId: string, sinceTick: number): LedgerSummary {
+    return summarizeLedger(this.db, companyId, sinceTick);
   }
 
   createJobSlot(params: CreateJobSlotParams): void {

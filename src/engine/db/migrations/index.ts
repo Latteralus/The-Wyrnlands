@@ -7,6 +7,8 @@ import { migration_0006_action_cancelled_status } from './0006_action_cancelled_
 import { migration_0007_jobs_and_companies } from './0007_jobs_and_companies';
 import { migration_0008_npcs_and_households } from './0008_npcs_and_households';
 import { migration_0009_rng_state } from './0009_rng_state';
+import { migration_0010_production_chains } from './0010_production_chains';
+import { migration_0011_company_growth } from './0011_company_growth';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -23,4 +25,6 @@ export const migrations: Migration[] = [
   migration_0007_jobs_and_companies,
   migration_0008_npcs_and_households,
   migration_0009_rng_state,
+  migration_0010_production_chains,
+  migration_0011_company_growth,
 ];

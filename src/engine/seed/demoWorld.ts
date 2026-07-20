@@ -4,7 +4,14 @@ import { createWorkShiftActionDefinition } from '../jobs/shifts';
 import { createBuyActionDefinition, createSellActionDefinition } from '../market/market';
 import { withOptional } from '../optional';
 import { generateNpcPopulation } from '../population/npcGen';
-import { FARMING_SKILL, LABOR_SKILL, WOODCUTTING_SKILL } from '../skills/skills';
+import {
+  BAKING_SKILL,
+  FARMING_SKILL,
+  LABOR_SKILL,
+  MANAGEMENT_SKILL,
+  MILLING_SKILL,
+  WOODCUTTING_SKILL,
+} from '../skills/skills';
 import type { Engine } from '../engine';
 
 // This seeds just enough world for every screen to have real data: a real
@@ -27,15 +34,14 @@ export const FARM_SHIFT_DURATION_TICKS = 360; // a six-hour shift (§14.4)
 const FARM_WAGE_MIN = 3;
 const FARM_WAGE_MAX = 6;
 // Sized for up to FARM_JOB_CAPACITY workers' wages over a full 90-day season
-// with zero revenue — companies don't sell their output yet (no mill/bakery
-// chain until Stage 5), so this is a one-way drain by design. Generous
-// headroom rather than a tightly-balanced number (§17's balance harness is
-// the place for real tuning); a company that outlives Stage 4's exit test
-// but would eventually go insolvent over a longer run is a realistic
-// outcome (§11.5), not a bug — see shifts.ts's affordableWage cap for what
-// happens when it does.
+// even before §Stage 5's grain-selling revenue ramps up — generous headroom
+// rather than a tightly-balanced number (§17's balance harness is the place
+// for real tuning); a company that would eventually go insolvent over a
+// long enough run with badly-managed selling is a realistic outcome
+// (§11.5), not a bug — see shifts.ts's affordableWage cap for what happens
+// when it does, and companies/decisions.ts's insolvency signal.
 const FARM_STARTING_CAPITAL = 2500;
-const FARM_JOB_CAPACITY = 3; // room for the player plus a couple of NPC farmhands
+const FARM_JOB_CAPACITY = 4; // the owner-operator, a couple of NPC farmhands, and a slot left open for the player
 
 export const LOGGING_SITE_ID = 'forest'; // the camp works out of the existing forest site, no new location needed
 export const LOGGING_COMPANY_ID = 'hollows_edge_logging';
@@ -44,9 +50,60 @@ const LOGGING_SHIFT_DURATION_TICKS = 360;
 const LOGGING_WAGE_MIN = 3;
 const LOGGING_WAGE_MAX = 6;
 const LOGGING_STARTING_CAPITAL = 2500;
-const LOGGING_JOB_CAPACITY = 3;
+const LOGGING_JOB_CAPACITY = 4; // the owner-operator plus the same 3 NPC woodcutters as before (still none open for the player)
+
+// §Stage 5's first real transformation chain: grain (farm) -> flour (mill)
+// -> bread (bakery), closing the loop that used to be a one-way merchant
+// import (see market.ts's producerCompanyId). Modest starting capital —
+// unlike the farm/logging camp above, these two are meant to actually earn
+// their keep from day one via companies/decisions.ts's daily selling.
+export const MILL_SITE_ID = 'mill';
+export const MILL_COMPANY_ID = 'riverside_mill';
+export const MILL_JOB_SLOT_ID = 'riverside_mill_miller';
+const MILL_SHIFT_DURATION_TICKS = 360;
+const MILL_WAGE_MIN = 3;
+const MILL_WAGE_MAX = 6;
+const MILL_STARTING_CAPITAL = 500;
+const MILL_JOB_CAPACITY = 2;
+
+export const BAKERY_SITE_ID = 'bakery';
+export const BAKERY_COMPANY_ID = 'village_bakery';
+export const BAKERY_JOB_SLOT_ID = 'village_bakery_baker';
+const BAKERY_SHIFT_DURATION_TICKS = 360;
+const BAKERY_WAGE_MIN = 3;
+const BAKERY_WAGE_MAX = 6;
+const BAKERY_STARTING_CAPITAL = 500;
+const BAKERY_JOB_CAPACITY = 2;
+
+// §9.2 "some NPC companies are simply better run than others." Each
+// company gets a dedicated owner-operator NPC whose starting Management XP
+// (skills.ts: 200 XP/level, level 5 max) is deliberately spread across the
+// whole range rather than uniform — a real, observable divergence in
+// companies/decisions.ts's restocking reliability (higher management =
+// checks stock more often, buys bigger batches), not just a flavor label.
+// Management currently weights *buying* only, not selling efficiency or
+// purchase restraint relative to actual throughput — a real 90-day headless
+// run (2026-07-19, see DECISIONS.md) showed the level-5-managed mill buying
+// grain faster than it could resell flour, leaving it balance-fragile
+// (briefly insolvent), while the level-0-managed bakery — benefiting from
+// guaranteed high-volume consumer demand for bread — was the run's clear
+// profit leader. Not the "well-managed thrives / sloppy struggles" story
+// this was seeded expecting; left as an honest, real finding and a named
+// follow-up (§11.5's emergence target isn't disproven, just not yet
+// delivered by this mechanism alone) rather than silently rewritten to fit.
+// Placeholder spread either way — revisit with the balance harness (§17).
+const FARM_OWNER_MANAGEMENT_XP = 650; // level 3
+const LOGGING_OWNER_MANAGEMENT_XP = 450; // level 2
+const MILL_OWNER_MANAGEMENT_XP = 1100; // level 5
+const BAKERY_OWNER_MANAGEMENT_XP = 50; // level 0
+const OWNER_STARTING_RESERVE = 80; // same placeholder "modest family savings" as generated NPC households
 
 export const NPC_HOUSEHOLD_COUNT = 20;
+// §9.2: one single-person household per company owner-operator (farm,
+// logging, mill, bakery — seedCompanyOwner) — real households, not test
+// fixtures, so anything counting engine.listHouseholds() needs to account
+// for them alongside the generated NPC ones.
+export const COMPANY_OWNER_HOUSEHOLD_COUNT = 4;
 
 // Action *definitions* are code, held only in the ActionRegistry in memory
 // (§Stage 0 decision) — they never persist to the DB. A reloaded save (or,
@@ -163,6 +220,38 @@ export function registerDemoActionTypes(engine: Engine): void {
   engine.registerActionType(
     createWorkShiftActionDefinition(LOGGING_JOB_SLOT_ID, { durationTicks: LOGGING_SHIFT_DURATION_TICKS }),
   );
+  engine.registerActionType(
+    createWorkShiftActionDefinition(MILL_JOB_SLOT_ID, { durationTicks: MILL_SHIFT_DURATION_TICKS }),
+  );
+  engine.registerActionType(
+    createWorkShiftActionDefinition(BAKERY_JOB_SLOT_ID, { durationTicks: BAKERY_SHIFT_DURATION_TICKS }),
+  );
+}
+
+// §9.2: creates a single-person household for a company's owner-operator —
+// reuses the household machinery wholesale (needs, feeding, the adaptation
+// ladder) rather than inventing a needs-free "abstract owner" concept, and
+// keeps them off the player's expensive per-tick needs path the same way
+// every other NPC is (household membership is Engine's own exclusion
+// signal — see population/cadence.ts's header comment). Returns the new
+// owner's entity id.
+function seedCompanyOwner(
+  engine: Engine,
+  householdId: string,
+  name: string,
+  managementXp: number,
+  jobSlotId: string,
+): string {
+  const entityId = `${householdId}-owner`;
+  engine.createHousehold({ id: householdId, name: `The ${name} Household`, homeSiteId: 'tavern' });
+  engine.faucetCoin(householdId, OWNER_STARTING_RESERVE, 'Modest family savings.', 'business');
+  engine.createEntity(entityId, name);
+  engine.ensureNeeds(entityId);
+  engine.addHouseholdMember(householdId, entityId);
+  engine.ensureSkill(entityId, MANAGEMENT_SKILL);
+  engine.addSkillXp(entityId, MANAGEMENT_SKILL, managementXp);
+  engine.applyForJob(entityId, jobSlotId, { haggle: false, scope: 'settlement' });
+  return entityId;
 }
 
 export function seedDemoWorld(engine: Engine): void {
@@ -192,14 +281,23 @@ export function seedDemoWorld(engine: Engine): void {
   });
   engine.equipItem(PLAYER_ID, 'player-starting-shoes');
 
-  // Bread stock is sized for the whole settlement (§Stage 4's ~40 NPCs plus
-  // the player), not just one person — 500 (Stage 2's number) was tuned
-  // for a single actor and would run the market dry well inside a 90-day
-  // run at this population scale.
-  engine.seedMarketListing('market', 'bread', 2, 6000);
+  // Bread stock is a bridging safety buffer, not the settlement's whole
+  // supply anymore — §Stage 5's bakery (below) is meant to take over real
+  // production within its first few weeks (companies/decisions.ts's daily
+  // selling). 1000 is generous enough to cover the ramp-up (the chain needs
+  // a farm sale -> mill purchase -> mill sale -> bakery purchase -> bakery
+  // sale before any of its own bread reaches the market) without masking
+  // whether the chain is actually working, the way the old 6000 would.
+  engine.seedMarketListing('market', 'bread', 2, 1000);
   engine.seedMarketListing('market', 'shoes', 15, 20);
   engine.seedMarketListing('market', 'cloak', 25, 10);
   engine.seedMarketListing('market', 'firewood', 3, 0);
+  // §Stage 5 §9.4: "bought from toolmakers (or the merchant faucet early
+  // on)" — no toolmaker company exists yet, so company equipment purchasing
+  // (companies/decisions.ts's restockEquipment) buys replacements from here,
+  // the same merchant-faucet precedent as shoes/cloaks above.
+  engine.seedMarketListing('market', 'hoe', getGoodDefinition('hoe').basePrice, 5);
+  engine.seedMarketListing('market', 'axe', getGoodDefinition('axe').basePrice, 5);
 
   // §Stage 3: the farm as employer.
   engine.createSite({ id: FARM_SITE_ID, name: 'Oster Farm', kind: 'farm', x: 3, y: -3 });
@@ -231,6 +329,16 @@ export function seedDemoWorld(engine: Engine): void {
     toolGoodType: 'hoe',
     capacity: FARM_JOB_CAPACITY,
   });
+  engine.setCompanyOwner(
+    FARM_COMPANY_ID,
+    seedCompanyOwner(
+      engine,
+      'household-farm-owner',
+      'Aldric Oster',
+      FARM_OWNER_MANAGEMENT_XP,
+      FARM_JOB_SLOT_ID,
+    ),
+  );
 
   // §Stage 4: a second employer — variety in the labor market, and gives
   // households somewhere else to find work if the farm is full. Works out
@@ -268,6 +376,73 @@ export function seedDemoWorld(engine: Engine): void {
     toolGoodType: 'axe',
     capacity: LOGGING_JOB_CAPACITY,
   });
+  engine.setCompanyOwner(
+    LOGGING_COMPANY_ID,
+    seedCompanyOwner(
+      engine,
+      'household-logging-owner',
+      'Bram Hollow',
+      LOGGING_OWNER_MANAGEMENT_XP,
+      LOGGING_JOB_SLOT_ID,
+    ),
+  );
+
+  // §Stage 5: the mill (grain -> flour). No tool requirement yet — company
+  // equipment purchasing/upgrade tiers (§9.4/§9.5) are a later slice.
+  engine.createSite({ id: MILL_SITE_ID, name: 'Riverside Mill', kind: 'mill', x: -3, y: -1 });
+  engine.createCompany({ id: MILL_COMPANY_ID, name: 'Riverside Mill', kind: 'mill', siteId: MILL_SITE_ID });
+  engine.faucetCoin(MILL_COMPANY_ID, MILL_STARTING_CAPITAL, "The mill's modest starting capital.");
+  engine.createJobSlot({
+    id: MILL_JOB_SLOT_ID,
+    companyId: MILL_COMPANY_ID,
+    title: 'Miller',
+    skill: MILLING_SKILL,
+    wageMin: MILL_WAGE_MIN,
+    wageMax: MILL_WAGE_MAX,
+    shiftDurationTicks: MILL_SHIFT_DURATION_TICKS,
+    capacity: MILL_JOB_CAPACITY,
+  });
+  engine.setCompanyOwner(
+    MILL_COMPANY_ID,
+    seedCompanyOwner(
+      engine,
+      'household-mill-owner',
+      'Edda Millwright',
+      MILL_OWNER_MANAGEMENT_XP,
+      MILL_JOB_SLOT_ID,
+    ),
+  );
+
+  // §Stage 5: the bakery (flour -> bread) — closes the chain the market's
+  // bread listing used to be a pure merchant import for.
+  engine.createSite({ id: BAKERY_SITE_ID, name: 'The Village Bakery', kind: 'bakery', x: 0, y: 3 });
+  engine.createCompany({
+    id: BAKERY_COMPANY_ID,
+    name: 'The Village Bakery',
+    kind: 'bakery',
+    siteId: BAKERY_SITE_ID,
+  });
+  engine.faucetCoin(BAKERY_COMPANY_ID, BAKERY_STARTING_CAPITAL, "The bakery's modest starting capital.");
+  engine.createJobSlot({
+    id: BAKERY_JOB_SLOT_ID,
+    companyId: BAKERY_COMPANY_ID,
+    title: 'Baker',
+    skill: BAKING_SKILL,
+    wageMin: BAKERY_WAGE_MIN,
+    wageMax: BAKERY_WAGE_MAX,
+    shiftDurationTicks: BAKERY_SHIFT_DURATION_TICKS,
+    capacity: BAKERY_JOB_CAPACITY,
+  });
+  engine.setCompanyOwner(
+    BAKERY_COMPANY_ID,
+    seedCompanyOwner(
+      engine,
+      'household-bakery-owner',
+      'Osla Pryce',
+      BAKERY_OWNER_MANAGEMENT_XP,
+      BAKERY_JOB_SLOT_ID,
+    ),
+  );
 
   // §Stage 4: ~40 NPCs in households (§5.3's "one town, ~40-80 persistent
   // NPCs"). Leaves one farmhand slot open for the player to compete for
