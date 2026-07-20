@@ -40,3 +40,17 @@ export function queryLog(db: Database, scope: EventScope, limit = 100): EngineEv
 
   return rows.map(rowToEvent);
 }
+
+// §14.3 "Business logs (the ledger as narrative)": a company's whole visible
+// history, across both 'business' (routine sales/purchases) and
+// 'settlement' (hirings, upgrades, closures) scopes — filtered by actor
+// instead of scope, unlike queryLog above.
+export function queryActorLog(db: Database, actorId: string, limit = 100): EngineEvent[] {
+  const rows = queryRows(
+    db,
+    'SELECT tick, scope, actor_id, type, message, data FROM event_log WHERE actor_id = ? ORDER BY id DESC LIMIT ?',
+    [actorId, limit],
+  );
+
+  return rows.map(rowToEvent);
+}

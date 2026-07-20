@@ -98,6 +98,25 @@ const MILL_OWNER_MANAGEMENT_XP = 1100; // level 5
 const BAKERY_OWNER_MANAGEMENT_XP = 50; // level 0
 const OWNER_STARTING_RESERVE = 80; // same placeholder "modest family savings" as generated NPC households
 
+// §5.4 "Starting Conditions Are Rolled... the recent harvest quality, each
+// business's health... current season, price levels, and job availability.
+// Two new games in the same village play differently." The starting season
+// itself is rolled by Engine.ensureWorldMeta (a core calendar concept, not
+// seed-content); everything else rolled here is genuinely this seed's own
+// content decision. "Job availability" is the one named factor *not*
+// separately rolled this slice — the existing NPC-generation randomness
+// already gives some natural variance in who's hired where, but nothing
+// here deliberately widens or narrows it further; a flagged, honest scope
+// cut, not a silent omission.
+const PRICE_LEVEL_MIN = 0.85;
+const PRICE_LEVEL_RANGE = 0.4; // rolls a market-wide price level in [0.85, 1.25)
+const MAX_STARTING_GRAIN = 40; // a bountiful recent harvest leaves the farm with up to this much grain already in store
+const FAILED_BUSINESS_CHANCE = 0.2; // §5.4's own example: "one may be freshly failed — the shuttered mill opening"
+
+function rolledPrice(basePrice: number, priceLevel: number): number {
+  return Math.max(1, Math.round(basePrice * priceLevel));
+}
+
 export const NPC_HOUSEHOLD_COUNT = 20;
 // §9.2: one single-person household per company owner-operator (farm,
 // logging, mill, bakery — seedCompanyOwner) — real households, not test
@@ -258,6 +277,17 @@ export function seedDemoWorld(engine: Engine): void {
   registerDemoActionTypes(engine);
   if (engine.getSite('well')) return; // world content already seeded (e.g. a reloaded save)
 
+  // §5.4: rolled once, in a fixed order regardless of outcome, so the RNG
+  // draw sequence a given seed produces never depends on an earlier roll's
+  // result (same "same DB + same seed = same result" discipline as the
+  // rest of this codebase — see rng.ts). Must happen before anything reads
+  // engine.calendar (setStartSeasonIndex's own header comment explains why).
+  engine.setStartSeasonIndex(Math.floor(engine.nextRandom() * 4));
+  const priceLevel = PRICE_LEVEL_MIN + engine.nextRandom() * PRICE_LEVEL_RANGE;
+  const harvestQuality = engine.nextRandom();
+  const failedBusinessRoll = engine.nextRandom();
+  const failedBusinessIndex = Math.floor(engine.nextRandom() * 4);
+
   engine.createEntity(PLAYER_ID, 'You');
   engine.ensureWallet(PLAYER_ID);
   engine.faucetCoin(PLAYER_ID, 20, 'Started with 20 coin scraped together before leaving home.');
@@ -288,16 +318,19 @@ export function seedDemoWorld(engine: Engine): void {
   // a farm sale -> mill purchase -> mill sale -> bakery purchase -> bakery
   // sale before any of its own bread reaches the market) without masking
   // whether the chain is actually working, the way the old 6000 would.
-  engine.seedMarketListing('market', 'bread', 2, 1000);
-  engine.seedMarketListing('market', 'shoes', 15, 20);
-  engine.seedMarketListing('market', 'cloak', 25, 10);
-  engine.seedMarketListing('market', 'firewood', 3, 0);
+  // §5.4 "price levels": every starting listing scales with this world's
+  // own rolled priceLevel — two new games can open with genuinely different
+  // costs of living, not just different names.
+  engine.seedMarketListing('market', 'bread', rolledPrice(2, priceLevel), 1000);
+  engine.seedMarketListing('market', 'shoes', rolledPrice(15, priceLevel), 20);
+  engine.seedMarketListing('market', 'cloak', rolledPrice(25, priceLevel), 10);
+  engine.seedMarketListing('market', 'firewood', rolledPrice(3, priceLevel), 0);
   // §Stage 5 §9.4: "bought from toolmakers (or the merchant faucet early
   // on)" — no toolmaker company exists yet, so company equipment purchasing
   // (companies/decisions.ts's restockEquipment) buys replacements from here,
   // the same merchant-faucet precedent as shoes/cloaks above.
-  engine.seedMarketListing('market', 'hoe', getGoodDefinition('hoe').basePrice, 5);
-  engine.seedMarketListing('market', 'axe', getGoodDefinition('axe').basePrice, 5);
+  engine.seedMarketListing('market', 'hoe', rolledPrice(getGoodDefinition('hoe').basePrice, priceLevel), 5);
+  engine.seedMarketListing('market', 'axe', rolledPrice(getGoodDefinition('axe').basePrice, priceLevel), 5);
 
   // §Stage 3: the farm as employer.
   engine.createSite({ id: FARM_SITE_ID, name: 'Oster Farm', kind: 'farm', x: 3, y: -3 });
@@ -318,6 +351,21 @@ export function seedDemoWorld(engine: Engine): void {
       { durability: getGoodDefinition('hoe').maxDurability },
     ),
   );
+  // §5.4 "the recent harvest quality": a bountiful harvest leaves the farm
+  // already holding some grain when the game begins; a poor one leaves it
+  // starting from nothing — the mill's own restocking (companies/
+  // decisions.ts) has real starting stock to draw on sooner or later
+  // depending on this roll.
+  const startingGrain = Math.round(harvestQuality * MAX_STARTING_GRAIN);
+  for (let i = 0; i < startingGrain; i++) {
+    engine.produceItem({
+      id: `${FARM_COMPANY_ID}-starting-grain-${i}`,
+      type: 'grain',
+      containerId: FARM_COMPANY_ID,
+      note: "Grain left over from last season's harvest.",
+      scope: 'business',
+    });
+  }
   engine.createJobSlot({
     id: FARM_JOB_SLOT_ID,
     companyId: FARM_COMPANY_ID,
@@ -444,20 +492,61 @@ export function seedDemoWorld(engine: Engine): void {
     ),
   );
 
+  // §5.4's own example: "one may be freshly failed — the shuttered mill
+  // opening." Reuses the real closure path (companies/decisions.ts's
+  // tryCloseCompany does the same two calls once a company's own insolvency
+  // runs out its grace period) rather than a seed-only shortcut — this
+  // business really did operate (its owner was really hired above) and
+  // really did fail, just before tick 0 instead of during play.
+  const rollableCompanies = [FARM_COMPANY_ID, LOGGING_COMPANY_ID, MILL_COMPANY_ID, BAKERY_COMPANY_ID];
+  let failedCompanyId: string | null = null;
+  let failedCompanyName: string | null = null;
+  if (failedBusinessRoll < FAILED_BUSINESS_CHANCE) {
+    failedCompanyId = rollableCompanies[failedBusinessIndex]!;
+    const failedCompany = engine.getCompany(failedCompanyId)!;
+    failedCompanyName = failedCompany.name;
+    engine.terminateAllEmploymentsForCompany(
+      failedCompanyId,
+      `${failedCompany.name} had already closed its doors before you arrived.`,
+    );
+    engine.closeCompany(failedCompanyId);
+  }
+
+  // §5.4: "this village, this season, this situation" — a short record of
+  // what this particular seed rolled, for anything that wants to narrate it
+  // later (§14.4's First Hour); not surfaced in any screen yet.
+  engine.setScenarioRoll(
+    JSON.stringify({
+      startSeason: engine.calendar.season,
+      priceLevel: Math.round(priceLevel * 100) / 100,
+      harvestQuality: Math.round(harvestQuality * 100) / 100,
+      failedCompany: failedCompanyName,
+    }),
+  );
+
   // §Stage 4: ~40 NPCs in households (§5.3's "one town, ~40-80 persistent
   // NPCs"). Leaves one farmhand slot open for the player to compete for
-  // (§14.4's "crowded labor market" is a feature, not an oversight).
+  // (§14.4's "crowded labor market" is a feature, not an oversight). A
+  // closed company (the roll above) doesn't hire — applyForJob enforces
+  // that itself now, but filtering here too avoids generateNpcPopulation
+  // ever attempting (and throwing on) a hire that can't succeed.
+  const candidateJobSlotIds = [
+    FARM_JOB_SLOT_ID,
+    FARM_JOB_SLOT_ID,
+    LOGGING_JOB_SLOT_ID,
+    LOGGING_JOB_SLOT_ID,
+    LOGGING_JOB_SLOT_ID,
+  ].filter((jobSlotId) => {
+    if (failedCompanyId === FARM_COMPANY_ID) return jobSlotId !== FARM_JOB_SLOT_ID;
+    if (failedCompanyId === LOGGING_COMPANY_ID) return jobSlotId !== LOGGING_JOB_SLOT_ID;
+    return true;
+  });
+
   generateNpcPopulation(engine, {
     householdCount: NPC_HOUSEHOLD_COUNT,
     minMembersPerHousehold: 1,
     maxMembersPerHousehold: 3,
     homeSiteId: 'tavern', // no dedicated housing sites yet (§12 Housing is a later module) — the tavern stands in as "town center"
-    jobSlotIdsToFill: [
-      FARM_JOB_SLOT_ID,
-      FARM_JOB_SLOT_ID,
-      LOGGING_JOB_SLOT_ID,
-      LOGGING_JOB_SLOT_ID,
-      LOGGING_JOB_SLOT_ID,
-    ],
+    jobSlotIdsToFill: candidateJobSlotIds,
   });
 }

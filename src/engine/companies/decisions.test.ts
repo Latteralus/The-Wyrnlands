@@ -5,7 +5,7 @@ import { Engine } from '../engine';
 import { countActiveItemsOfType } from '../inventory/items';
 import { MANAGEMENT_SKILL, MILLING_SKILL } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
-import { recordLedgerEntry } from './companies';
+import { recordLedgerEntry, setCompanyInsolvency } from './companies';
 import { applyCompanyDailyCadence } from './decisions';
 
 async function newEngine(seed: string) {
@@ -228,6 +228,96 @@ describe('applyCompanyDailyCadence', () => {
     engine.faucetCoin('broke-co', 50, 'a rescue');
     applyCompanyDailyCadence(engine.db, engine.bus, 2 * MINUTES_PER_DAY);
     expect(engine.getCompany('broke-co')?.insolventSinceTick).toBeNull();
+
+    engine.dispose();
+  });
+
+  it('does not close a company still within its insolvency grace period', async () => {
+    const engine = await newEngine('decisions-no-early-closure');
+    engine.createCompany({ id: 'farm-co', name: 'Farm Co', kind: 'farm', siteId: 'market' });
+    engine.createJobSlot({
+      id: 'farm-job',
+      companyId: 'farm-co',
+      title: 'Farmhand',
+      skill: 'farming',
+      wageMin: 1,
+      wageMax: 2,
+      shiftDurationTicks: 60,
+      capacity: 1,
+    });
+    engine.createEntity('worker-1', 'Worker');
+    engine.ensureWallet('worker-1');
+    engine.applyForJob('worker-1', 'farm-job', { haggle: false });
+
+    // No owner -> NEUTRAL_MANAGEMENT_LEVEL(2) -> grace period 10+2*4=18 days.
+    setCompanyInsolvency(engine.db, 'farm-co', 0);
+    applyCompanyDailyCadence(engine.db, engine.bus, 5 * MINUTES_PER_DAY); // only 5 days elapsed
+
+    expect(engine.getCompany('farm-co')?.closedAtTick).toBeNull();
+    expect(engine.getEmployment('worker-1')).not.toBeNull();
+
+    engine.dispose();
+  });
+
+  it('closes a company that stays insolvent past its grace period: terminates workers, auctions tools, spoils leftover stock (§9.6)', async () => {
+    const engine = await newEngine('decisions-closure');
+    engine.createSite({ id: 'farm', name: 'Farm', kind: 'farm', x: 1, y: 1 });
+    engine.createCompany({ id: 'farm-co', name: 'Farm Co', kind: 'farm', siteId: 'farm' });
+    engine.createJobSlot({
+      id: 'farm-job',
+      companyId: 'farm-co',
+      title: 'Farmhand',
+      skill: 'farming',
+      wageMin: 1,
+      wageMax: 2,
+      shiftDurationTicks: 60,
+      toolGoodType: 'hoe',
+      capacity: 1,
+    });
+    engine.produceItem({ id: 'farm-hoe-1', type: 'hoe', containerId: 'farm-co', durability: 3000 });
+    engine.produceItem({ id: 'farm-grain-1', type: 'grain', containerId: 'farm-co' });
+    engine.createEntity('worker-1', 'Worker');
+    engine.ensureWallet('worker-1');
+    engine.applyForJob('worker-1', 'farm-job', { haggle: false });
+
+    // No owner -> NEUTRAL_MANAGEMENT_LEVEL(2) -> grace period 10+2*4=18 days.
+    setCompanyInsolvency(engine.db, 'farm-co', 0);
+    applyCompanyDailyCadence(engine.db, engine.bus, 20 * MINUTES_PER_DAY); // 20 days elapsed > 18
+
+    const company = engine.getCompany('farm-co');
+    expect(company?.closedAtTick).toBe(20 * MINUTES_PER_DAY);
+    expect(engine.getEmployment('worker-1')).toBeNull(); // terminated
+
+    // The hoe was auctioned — a real, buyable market listing now exists.
+    expect(engine.getItem('farm-hoe-1')?.containerId).toBe('market-stock');
+    expect(engine.getItem('farm-hoe-1')?.status).toBe('active'); // transferred, not destroyed
+    expect(engine.getMarketListing('market', 'hoe')?.quantity).toBe(1);
+
+    // Leftover raw material has no buyer once its producer is gone — spoils.
+    expect(engine.getItem('farm-grain-1')?.status).toBe('spoiled');
+
+    expect(engine.queryLog('settlement', 100).some((e) => e.type === 'business.closed')).toBe(true);
+    // Closed companies drop out of job listings (jobs.ts's listJobOpenings filter).
+    expect(engine.listJobOpenings().some((s) => s.id === 'farm-job')).toBe(false);
+
+    engine.dispose();
+  });
+
+  it('does nothing more for an already-closed company on later cadence calls', async () => {
+    const engine = await newEngine('decisions-closed-idempotent');
+    engine.createCompany({ id: 'farm-co', name: 'Farm Co', kind: 'farm', siteId: 'market' });
+    setCompanyInsolvency(engine.db, 'farm-co', 0);
+    applyCompanyDailyCadence(engine.db, engine.bus, 20 * MINUTES_PER_DAY);
+    expect(engine.getCompany('farm-co')?.closedAtTick).toBe(20 * MINUTES_PER_DAY);
+
+    engine.faucetCoin('farm-co', 500, 'irrelevant now');
+    applyCompanyDailyCadence(engine.db, engine.bus, 30 * MINUTES_PER_DAY);
+
+    // Still closed at the original tick — a solvent balance afterward
+    // doesn't reopen it, and no second closure event fires.
+    expect(engine.getCompany('farm-co')?.closedAtTick).toBe(20 * MINUTES_PER_DAY);
+    const closedEvents = engine.queryLog('settlement', 100).filter((e) => e.type === 'business.closed');
+    expect(closedEvents.length).toBe(1);
 
     engine.dispose();
   });

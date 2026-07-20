@@ -29,9 +29,14 @@ function seasonForDayOfYear(dayOfYear: number): Season {
 }
 
 // tick = total in-game minutes elapsed since world creation (tick 0).
-export function deriveCalendar(tick: number): Calendar {
+// startSeasonIndex (§5.4 "Starting Conditions Are Rolled... current
+// season") shifts which season/day/year tick 0 itself falls in — rolled
+// once at world creation (Engine.ensureWorldMeta) and applied consistently
+// here ever after, rather than every new game always starting on spring
+// day 1. Defaults to 0 (spring) so every existing caller/test is unaffected.
+export function deriveCalendar(tick: number, startSeasonIndex = 0): Calendar {
   const minuteOfDay = tick % MINUTES_PER_DAY;
-  const totalDays = Math.floor(tick / MINUTES_PER_DAY);
+  const totalDays = Math.floor(tick / MINUTES_PER_DAY) + startSeasonIndex * DAYS_PER_SEASON;
   const dayOfYear = totalDays % DAYS_PER_YEAR;
   const year = Math.floor(totalDays / DAYS_PER_YEAR) + 1;
   const season = seasonForDayOfYear(dayOfYear);

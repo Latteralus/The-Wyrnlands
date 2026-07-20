@@ -18,18 +18,24 @@ export interface Company {
   ownerId: string | null;
   // §9.6/§11.5 "insolvency": the tick a company's balance first hit zero and
   // hasn't recovered since, or null if solvent. Set/cleared by
-  // companies/decisions.ts's daily cadence — a real, minimal signal, not the
-  // full closure/auction machinery (§9.4/§9.5's equipment/upgrade modeling
-  // doesn't exist yet to make that honest).
+  // companies/decisions.ts's daily cadence; once it's been true for longer
+  // than that company's Management-weighted grace period, tryCloseCompany
+  // acts on it (see closedAtTick below).
   insolventSinceTick: number | null;
   // §9.5 "upgrade tiers expand job slots, storage, and workstations" — starts
   // at 1; raised by companies/decisions.ts's tryUpgrade.
   tier: number;
+  // §9.6 "permanent failure -> auction": the tick this company closed for
+  // good, or null while still operating. Set once, never cleared — unlike
+  // insolvency, closure isn't recoverable (matches real closures: workers
+  // terminated, remaining equipment auctioned — see companies/decisions.ts's
+  // tryCloseCompany).
+  closedAtTick: number | null;
 }
 
 export function createCompany(
   db: Database,
-  company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier'>,
+  company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick'>,
 ): void {
   db.run('INSERT INTO companies (id, name, kind, site_id) VALUES (?, ?, ?, ?)', [
     company.id,
@@ -43,7 +49,7 @@ export function setCompanyOwner(db: Database, companyId: string, ownerId: string
   db.run('UPDATE companies SET owner_id = ? WHERE id = ?', [ownerId, companyId]);
 }
 
-const COMPANY_COLUMNS = 'id, name, kind, site_id, owner_id, insolvent_since_tick, tier';
+const COMPANY_COLUMNS = 'id, name, kind, site_id, owner_id, insolvent_since_tick, tier, closed_at_tick';
 
 function rowToCompany(row: unknown[]): Company {
   return {
@@ -54,6 +60,7 @@ function rowToCompany(row: unknown[]): Company {
     ownerId: typeof row[4] === 'string' ? row[4] : null,
     insolventSinceTick: row[5] === null ? null : Number(row[5]),
     tier: Number(row[6]),
+    closedAtTick: row[7] === null ? null : Number(row[7]),
   };
 }
 
@@ -74,6 +81,13 @@ export function setCompanyInsolvency(db: Database, companyId: string, sinceTick:
 // is the only caller, and it's responsible for the capacity/cost side.
 export function bumpCompanyTier(db: Database, companyId: string): void {
   db.run('UPDATE companies SET tier = tier + 1 WHERE id = ?', [companyId]);
+}
+
+// §9.6 "permanent failure": marks a company closed for good — companies/
+// decisions.ts's tryCloseCompany is the only caller, and it's responsible
+// for terminating employment and auctioning/liquidating inventory first.
+export function closeCompany(db: Database, companyId: string, tick: number): void {
+  db.run('UPDATE companies SET closed_at_tick = ? WHERE id = ?', [tick, companyId]);
 }
 
 // §9.3 Ledger — a minimal, real version. Full tabbed company screens

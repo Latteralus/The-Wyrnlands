@@ -9,6 +9,10 @@ import { migration_0008_npcs_and_households } from './0008_npcs_and_households';
 import { migration_0009_rng_state } from './0009_rng_state';
 import { migration_0010_production_chains } from './0010_production_chains';
 import { migration_0011_company_growth } from './0011_company_growth';
+import { migration_0012_company_closure } from './0012_company_closure';
+import { migration_0013_items_container_type_index } from './0013_items_container_type_index';
+import { migration_0014_event_log_actor_index } from './0014_event_log_actor_index';
+import { migration_0015_rolled_starting_conditions } from './0015_rolled_starting_conditions';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -27,4 +31,8 @@ export const migrations: Migration[] = [
   migration_0009_rng_state,
   migration_0010_production_chains,
   migration_0011_company_growth,
+  migration_0012_company_closure,
+  migration_0013_items_container_type_index,
+  migration_0014_event_log_actor_index,
+  migration_0015_rolled_starting_conditions,
 ];

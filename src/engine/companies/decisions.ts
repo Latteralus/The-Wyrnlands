@@ -1,18 +1,30 @@
 import { getGoodDefinition } from '../goods/catalog';
-import { countActiveItemsOfType } from '../inventory/items';
+import {
+  countActiveItemsOfType,
+  destroyItem,
+  listActiveItemsInContainer,
+  transferItem,
+} from '../inventory/items';
 import { getBalance, sinkCoin } from '../inventory/wallet';
 import {
   countActiveEmploymentsForSlot,
   listJobSlotsForCompany,
   setJobSlotCapacity,
+  terminateAllEmploymentsForCompany,
   type JobSlot,
 } from '../jobs/jobs';
-import { companyBuyFromMarket, getListing, sellSurplusToMarket } from '../market/market';
+import {
+  companyBuyFromMarket,
+  getListing,
+  marketStockContainerId,
+  sellSurplusToMarket,
+} from '../market/market';
 import { getRecipeForSkill, hasKnownDemand, type Recipe } from '../production/recipes';
 import { getLevel, MANAGEMENT_SKILL } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
 import {
   bumpCompanyTier,
+  closeCompany,
   listCompanies,
   recordLedgerEntry,
   setCompanyInsolvency,
@@ -157,21 +169,119 @@ function tryUpgrade(
   });
 }
 
+// §9.6 "permanent failure -> auction": everything a closing company still
+// holds gets liquidated in one pass. Tools/equipment go to real auction —
+// transferred into the market's own stock (§7.1 provenance: a real
+// transfer, not conjured away) so any company or the player can genuinely
+// buy a used hoe or axe afterward, same mechanism as an ordinary sale
+// (market.ts's sellSurplusToMarket precedent) but explicitly unbacked (no
+// producerCompanyId — the seller no longer exists to be paid; whoever buys
+// it just pays into the void, the same "merchant faucet" simplification as
+// shoes/cloaks). A fresh auction listing starts at a discount off base
+// price; merging into an already-existing listing leaves that listing's
+// live (smoothed-pricing-managed) price alone rather than fighting it.
+// Anything else — raw materials, unsold output — has no buyer once its
+// producer is gone, so it spoils rather than joining a market listing that
+// would otherwise incorrectly imply a real product moving through.
+const AUCTION_STARTING_PRICE_FACTOR = 0.5;
+const AUCTION_REFERENCE_STOCK = 5;
+
+function liquidateCompany(
+  db: Database,
+  bus: EventBus,
+  company: Company,
+  slots: JobSlot[],
+  tick: number,
+): void {
+  const toolTypes = new Set(slots.map((slot) => slot.toolGoodType).filter((t): t is string => t !== null));
+
+  for (const item of listActiveItemsInContainer(db, company.id)) {
+    if (toolTypes.has(item.type)) {
+      transferItem(db, bus, item.id, marketStockContainerId(MARKET_SITE_ID), tick, {
+        note: `${company.name}'s closure sends a ${item.type} to auction.`,
+        scope: 'settlement',
+      });
+      const listing = getListing(db, MARKET_SITE_ID, item.type);
+      if (listing) {
+        db.run('UPDATE market_listings SET quantity = quantity + 1 WHERE id = ?', [listing.id]);
+      } else {
+        const startingPrice = Math.max(
+          1,
+          Math.round(getGoodDefinition(item.type).basePrice * AUCTION_STARTING_PRICE_FACTOR),
+        );
+        db.run(
+          `INSERT INTO market_listings (site_id, good_type, price, quantity, reference_stock)
+           VALUES (?, ?, ?, 1, ?)`,
+          [MARKET_SITE_ID, item.type, startingPrice, AUCTION_REFERENCE_STOCK],
+        );
+      }
+    } else {
+      destroyItem(db, bus, item.id, 'spoiled', tick, {
+        note: `${company.name}'s remaining stock spoils after closure.`,
+        scope: 'settlement',
+      });
+    }
+  }
+}
+
+// A company that stays insolvent past its own Management-weighted grace
+// period closes for good — badly-managed businesses "fail for real
+// reasons" (§8.1 rule 3), but a well-managed owner works harder to avoid
+// outright failure first, hence the grace period scaling with Management
+// the same way restocking reliability does (§9.2). Deterministic (day-count
+// threshold, not a dice roll) for the same reproducibility reason as
+// restockIntervalDays above.
+const CLOSURE_BASE_GRACE_DAYS = 10;
+const CLOSURE_GRACE_DAYS_PER_MANAGEMENT_LEVEL = 4;
+
+function tryCloseCompany(
+  db: Database,
+  bus: EventBus,
+  company: Company,
+  slots: JobSlot[],
+  managementLevel: number,
+  tick: number,
+): boolean {
+  if (company.insolventSinceTick === null) return false;
+
+  const daysInsolvent = (tick - company.insolventSinceTick) / MINUTES_PER_DAY;
+  const graceDays = CLOSURE_BASE_GRACE_DAYS + managementLevel * CLOSURE_GRACE_DAYS_PER_MANAGEMENT_LEVEL;
+  if (daysInsolvent < graceDays) return false;
+
+  const message = `${company.name} closes its doors for good, unable to recover from its debts.`;
+  terminateAllEmploymentsForCompany(db, bus, company.id, tick, message);
+  liquidateCompany(db, bus, company, slots, tick);
+  closeCompany(db, company.id, tick);
+
+  bus.emit({
+    tick,
+    scope: 'settlement',
+    actorId: company.id,
+    type: 'business.closed',
+    message,
+    data: { daysInsolvent: Math.floor(daysInsolvent) },
+  });
+  return true;
+}
+
 // §4.2 cadence: "daily (... business decisions ...)" and §9.6's own list —
 // "production levels, prices, input orders... repairs, equipment
-// purchases, upgrade investment, freight contracting." Builds input
-// restocking, output selling, equipment replacement, and upgrade-tier
-// growth, all Management-weighted, plus a minimal real insolvency signal.
-// True standing B2B contracts with freight (§9.7 — needs the transport
-// module, which doesn't exist yet) and closure->auction (§9.6's "permanent
-// failure -> auction") are still not built — named gaps, not silent ones;
-// see DECISIONS.md.
+// purchases, upgrade investment, freight contracting... permanent failure
+// -> auction." Builds input restocking, output selling, equipment
+// replacement, upgrade-tier growth, and closure->auction, all Management-
+// weighted. True standing B2B contracts with freight (§9.7 — needs the
+// transport module, which doesn't exist yet) are still not built — a named
+// gap, not a silent one; see DECISIONS.md.
 export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: number): void {
   const day = tick / MINUTES_PER_DAY;
 
   for (const company of listCompanies(db)) {
+    if (company.closedAtTick !== null) continue; // already closed — nothing left to decide
+
     const managementLevel = managementLevelFor(db, company);
     const slots = listJobSlotsForCompany(db, company.id);
+
+    if (tryCloseCompany(db, bus, company, slots, managementLevel, tick)) continue;
 
     restockEquipment(db, bus, company, slots, tick);
     tryUpgrade(db, bus, company, slots, managementLevel, tick);
@@ -200,9 +310,9 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
       }
     }
 
-    // §9.6/§11.5 "insolvency": a real, minimal signal — first tick balance
-    // hit zero, cleared the moment it recovers. Not closure/auction (see
-    // this function's own header comment).
+    // §9.6/§11.5 "insolvency": first tick balance hit zero, cleared the
+    // moment it recovers — tryCloseCompany above reads this to decide
+    // whether a company's grace period has run out.
     const balance = getBalance(db, company.id);
     if (balance <= 0) {
       if (company.insolventSinceTick === null) {

@@ -1,4 +1,5 @@
 import type { QueuedAction } from '../actions/types';
+import type { Company, LedgerSummary } from '../companies/companies';
 import type { Engine } from '../engine';
 import type { Entity } from '../entities';
 import type { EngineEvent, EventScope } from '../eventBus';
@@ -26,6 +27,8 @@ export type {
   Entity,
   Household,
   PresentEntity,
+  Company,
+  LedgerSummary,
 };
 export { MINUTES_PER_DAY } from '../time/clock';
 
@@ -61,6 +64,12 @@ export interface UiApi {
   listHouseholdMembers(householdId: string): string[];
   getHouseholdIdForMember(entityId: string): string | null;
   listPresentEntities(siteId: string): PresentEntity[];
+  listCompanies(): Company[];
+  getCompany(id: string): Company | null;
+  listJobSlotsForCompany(companyId: string): JobSlot[];
+  countActiveEmploymentsForSlot(jobSlotId: string): number;
+  getCompanyLedgerSummary(companyId: string, sinceTick: number): LedgerSummary;
+  queryActorLog(actorId: string, limit?: number): EngineEvent[];
 }
 
 export function createUiApi(engine: Engine): UiApi {
@@ -91,5 +100,11 @@ export function createUiApi(engine: Engine): UiApi {
     listHouseholdMembers: (householdId) => engine.listHouseholdMembers(householdId),
     getHouseholdIdForMember: (entityId) => engine.getHouseholdIdForMember(entityId),
     listPresentEntities: (siteId) => engine.listPresentEntities(siteId),
+    listCompanies: () => engine.listCompanies(),
+    getCompany: (id) => engine.getCompany(id),
+    listJobSlotsForCompany: (companyId) => engine.listJobSlotsForCompany(companyId),
+    countActiveEmploymentsForSlot: (jobSlotId) => engine.countActiveEmploymentsForSlot(jobSlotId),
+    getCompanyLedgerSummary: (companyId, sinceTick) => engine.getCompanyLedgerSummary(companyId, sinceTick),
+    queryActorLog: (actorId, limit) => engine.queryActorLog(actorId, limit),
   };
 }

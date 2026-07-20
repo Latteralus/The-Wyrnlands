@@ -40,6 +40,15 @@ export function findFirstActiveItem(db: Database, containerId: string, type: str
   return row ? rowToItem(row) : null;
 }
 
+// §9.6 "permanent failure -> auction": a closing company needs to liquidate
+// everything it still holds, of every type — companies/decisions.ts's
+// liquidateCompany is the only caller.
+export function listActiveItemsInContainer(db: Database, containerId: string): Item[] {
+  return queryRows(db, `SELECT ${ITEM_COLUMNS} FROM items WHERE container_id = ? AND status = 'active'`, [
+    containerId,
+  ]).map(rowToItem);
+}
+
 // §Stage 5: how much of a good a container (typically a company) currently
 // holds — production chains (production/recipes.ts) use this to cap output
 // by available input stock before consuming any of it.

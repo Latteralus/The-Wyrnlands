@@ -20,6 +20,10 @@ describe('applyMigrations', () => {
       '0009_rng_state',
       '0010_production_chains',
       '0011_company_growth',
+      '0012_company_closure',
+      '0013_items_container_type_index',
+      '0014_event_log_actor_index',
+      '0015_rolled_starting_conditions',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 

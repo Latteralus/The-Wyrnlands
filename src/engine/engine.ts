@@ -9,6 +9,7 @@ import {
 import { ActionRegistry } from './actions/registry';
 import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
 import {
+  closeCompany,
   createCompany,
   getCompany,
   listCompanies,
@@ -36,10 +37,13 @@ import {
 import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
 import {
   applyForJob,
+  countActiveEmploymentsForSlot,
   createJobSlot,
   getActiveEmployment,
   listJobOpenings,
+  listJobSlotsForCompany,
   quitJob,
+  terminateAllEmploymentsForCompany,
   type ApplyForJobOptions,
   type ApplyResult,
   type CreateJobSlotParams,
@@ -47,7 +51,7 @@ import {
   type JobSlot,
   type QuitJobOptions,
 } from './jobs/jobs';
-import { attachLogger, queryLog } from './logs/logger';
+import { attachLogger, queryActorLog, queryLog } from './logs/logger';
 import {
   decrementStock,
   getListing,
@@ -116,6 +120,8 @@ export class Engine {
   readonly actions = new ActionRegistry();
   private rng: SeededRng;
   private detachLogger: () => void;
+  // Cached, not re-queried per call — see getStartSeasonIndex()'s comment.
+  private startSeasonIndex: number | null = null;
 
   // Resumes the RNG from wherever it left off (world_meta.rng_state) rather
   // than always re-deriving it from the seed string — a brand-new world has
@@ -146,6 +152,17 @@ export class Engine {
     const existing = queryRow(this.db, 'SELECT id FROM world_meta WHERE id = 1');
     if (existing) return;
 
+    // start_season_index defaults to 0 (spring) here — deliberately NOT
+    // rolled at this layer. Engine.bootstrap() runs for every test and
+    // caller in this codebase, most of which have nothing to do with §5.4's
+    // rolled starting conditions and were written assuming a fixed,
+    // predictable spring start (confirmed the hard way: rolling it here
+    // broke five unrelated unit tests — needs.test.ts's winter-dependent
+    // assertions, stage2/stage3's consumption-tracing scripts tuned for a
+    // specific season, engine.test.ts's save/reload byte comparison). §5.4
+    // is seed-layer content, same as every other roll in this family
+    // (price level, harvest quality, business failure — see seed/
+    // demoWorld.ts) — setStartSeasonIndex() below is how seed code opts in.
     this.db.run('INSERT INTO world_meta (id, tick, rng_seed, schema_version) VALUES (1, 0, ?, 1)', [seed]);
     this.bus.emit({
       tick: 0,
@@ -155,13 +172,54 @@ export class Engine {
     });
   }
 
+  // §5.4: seed code's opt-in hook for rolling a starting season (see
+  // seed/demoWorld.ts) — must be called before any calendar-dependent
+  // behavior runs (ticks, needs decay), and before anything else reads
+  // engine.calendar, since getStartSeasonIndex() below caches its result.
+  setStartSeasonIndex(index: number): void {
+    this.db.run('UPDATE world_meta SET start_season_index = ? WHERE id = 1', [index]);
+    this.startSeasonIndex = index;
+  }
+
   get tick(): number {
     const row = queryRow(this.db, 'SELECT tick FROM world_meta WHERE id = 1');
     return Number(row?.[0] ?? 0);
   }
 
+  // applyNeedsCadence below calls this every tick, and start_season_index
+  // never changes after world creation (unlike tick itself) — after slice
+  // 3's performance investigation into per-operation cost at scale, a
+  // per-tick query for a value that's permanently fixed after
+  // ensureWorldMeta runs is worth avoiding on principle, not just when
+  // profiling proves it necessary. Lazy so it's safe to call before
+  // ensureWorldMeta as well as after (both bootstrap and a reload/
+  // rehydration path guarantee the row exists by the time anything
+  // external can reach this method).
+  private getStartSeasonIndex(): number {
+    if (this.startSeasonIndex === null) {
+      const row = queryRow(this.db, 'SELECT start_season_index FROM world_meta WHERE id = 1');
+      this.startSeasonIndex = Number(row?.[0] ?? 0);
+    }
+    return this.startSeasonIndex;
+  }
+
   get calendar(): Calendar {
-    return deriveCalendar(this.tick);
+    return deriveCalendar(this.tick, this.getStartSeasonIndex());
+  }
+
+  // §5.4: a short, human-readable record of this world's rolled starting
+  // scenario (season, price levels, harvest quality, any business already
+  // failed) — set once by seed code (seed/demoWorld.ts) after rolling it,
+  // read back by anything that wants to narrate "this village, this
+  // season, this situation" (§14.4's First Hour). Reuses world_meta's own
+  // scenario_roll column (migration 0001), unused until now.
+  setScenarioRoll(summary: string): void {
+    this.db.run('UPDATE world_meta SET scenario_roll = ? WHERE id = 1', [summary]);
+  }
+
+  getScenarioRoll(): string | null {
+    const row = queryRow(this.db, 'SELECT scenario_roll FROM world_meta WHERE id = 1');
+    return typeof row?.[0] === 'string' ? row[0] : null;
   }
 
   // Wrapped in one explicit transaction rather than leaving each tick's
@@ -206,7 +264,7 @@ export class Engine {
     // per-tick action-queue machinery — see population/cadence.ts's header
     // comment for why that split is load-bearing, not cosmetic.
     if (nextTick % MINUTES_PER_DAY === 0) {
-      const exposedToCold = deriveCalendar(nextTick).season === 'winter';
+      const exposedToCold = deriveCalendar(nextTick, this.getStartSeasonIndex()).season === 'winter';
       applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold);
 
       // §Stage 5: smoothed pricing (§8.1 rule 4) and companies' own
@@ -245,7 +303,7 @@ export class Engine {
   // population/cadence.ts's header comment); NPCs' needs are handled by the
   // daily household cadence instead.
   private applyNeedsCadence(currentTick: number): void {
-    const season = deriveCalendar(currentTick).season;
+    const season = deriveCalendar(currentTick, this.getStartSeasonIndex()).season;
     const rows = queryRows(
       this.db,
       `SELECT entity_id FROM needs
@@ -448,7 +506,7 @@ export class Engine {
 
   // A company is also an entities row (its own wallet/inventory owner),
   // same as a person — see companies/companies.ts's header comment.
-  createCompany(company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier'>): void {
+  createCompany(company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick'>): void {
     this.createEntity(company.id, company.name);
     createCompany(this.db, company);
     this.ensureWallet(company.id);
@@ -481,6 +539,18 @@ export class Engine {
     return listJobOpenings(this.db);
   }
 
+  // §14.2 "NPC business view": a company's job slots (title, wage band,
+  // capacity) — unlike listJobOpenings(), includes a closed company's slots
+  // too, since the business view still needs to show what it *used* to hire
+  // for.
+  listJobSlotsForCompany(companyId: string): JobSlot[] {
+    return listJobSlotsForCompany(this.db, companyId);
+  }
+
+  countActiveEmploymentsForSlot(jobSlotId: string): number {
+    return countActiveEmploymentsForSlot(this.db, jobSlotId);
+  }
+
   getEmployment(entityId: string): Employment | null {
     return getActiveEmployment(this.db, entityId);
   }
@@ -491,6 +561,21 @@ export class Engine {
 
   quitJob(entityId: string, options?: QuitJobOptions): void {
     quitJob(this.db, this.bus, entityId, this.tick, options);
+  }
+
+  // §9.6/§5.4: lets seed code (or anything else deciding a business's fate
+  // outside the daily cadence's own tryCloseCompany) close a company for
+  // good — used by seed/demoWorld.ts's rolled starting conditions ("one may
+  // be freshly failed — the shuttered mill opening", §5.4) to seed a
+  // company that's already closed before the game begins. Caller is
+  // responsible for terminating employment first (below) — this only flips
+  // the flag.
+  closeCompany(companyId: string): void {
+    closeCompany(this.db, companyId, this.tick);
+  }
+
+  terminateAllEmploymentsForCompany(companyId: string, message: string): void {
+    terminateAllEmploymentsForCompany(this.db, this.bus, companyId, this.tick, message);
   }
 
   // --- Population: households & NPCs (§10, §11, §Stage 4) ---
@@ -547,6 +632,11 @@ export class Engine {
 
   queryLog(scope: EventScope, limit = 100): EngineEvent[] {
     return queryLog(this.db, scope, limit);
+  }
+
+  // §14.3 business logs: one actor's whole visible history, across scopes.
+  queryActorLog(actorId: string, limit = 100): EngineEvent[] {
+    return queryActorLog(this.db, actorId, limit);
   }
 
   nextRandom(): number {

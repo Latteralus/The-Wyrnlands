@@ -73,11 +73,16 @@ export function getJobSlot(db: Database, id: string): JobSlot | null {
   return row ? rowToJobSlot(row) : null;
 }
 
-// §14.2 Jobs screen: every posted opening, in listing order.
+// §14.2 Jobs screen: every posted opening, in listing order. Excludes job
+// slots belonging to a closed company (§9.6) — a defunct business doesn't
+// post openings, and this is also what population/cadence.ts's weekly
+// cadence and job-seeking iterate, so a closed company's (already-empty,
+// post-termination) slots don't get pointlessly re-checked either.
 export function listJobOpenings(db: Database): JobSlot[] {
-  return queryRows(db, `SELECT ${JOB_SLOT_COLUMNS} FROM ${JOB_SLOT_FROM} ORDER BY job_slots.id`).map(
-    rowToJobSlot,
-  );
+  return queryRows(
+    db,
+    `SELECT ${JOB_SLOT_COLUMNS} FROM ${JOB_SLOT_FROM} WHERE companies.closed_at_tick IS NULL ORDER BY job_slots.id`,
+  ).map(rowToJobSlot);
 }
 
 // §Stage 5: companies/decisions.ts's daily cadence needs to know what a
@@ -210,6 +215,14 @@ export function applyForJob(
   if (countActiveEmploymentsForSlot(db, jobSlotId) >= jobSlot.capacity) {
     throw new Error(`"${jobSlotId}" has no open positions.`);
   }
+  // §9.6: a closed company doesn't hire — enforced here, not just by
+  // listJobOpenings()'s own filter, so every caller (seed content with a
+  // hardcoded job-slot list, not just the Jobs screen/job-seeking cadence
+  // that already read from listJobOpenings) gets the same guarantee.
+  const companyRow = queryRow(db, 'SELECT closed_at_tick FROM companies WHERE id = ?', [jobSlot.companyId]);
+  if (companyRow?.[0] !== null && companyRow?.[0] !== undefined) {
+    throw new Error(`"${jobSlot.companyId}" has closed and isn't hiring.`);
+  }
 
   let wage = jobSlot.wageMin;
   let haggleSucceeded = false;
@@ -290,4 +303,24 @@ export function quitJob(
     message: options.message ?? defaultMessage,
     data: { jobSlotId: employment.jobSlotId },
   });
+}
+
+// §9.6 "permanent failure": a closing company lets every worker go at once
+// — companies/decisions.ts's tryCloseCompany is the only caller. Reuses
+// quitJob per entity (same event shape/log category as any other
+// dismissal) rather than a bespoke bulk-update, so a laid-off worker shows
+// up in the settlement log exactly like Stage 4's scripted job-loss test
+// already expects.
+export function terminateAllEmploymentsForCompany(
+  db: Database,
+  bus: EventBus,
+  companyId: string,
+  tick: number,
+  message: string,
+): void {
+  for (const slot of listJobSlotsForCompany(db, companyId)) {
+    for (const employment of listActiveEmploymentsForSlot(db, slot.id)) {
+      quitJob(db, bus, employment.entityId, tick, { scope: 'settlement', message });
+    }
+  }
 }

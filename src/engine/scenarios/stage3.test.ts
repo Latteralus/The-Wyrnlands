@@ -130,6 +130,11 @@ describe('Stage 3 — First Job scenarios', () => {
       const needs = engine.getNeeds(PLAYER_ID)!;
       const balance = engine.getBalance(PLAYER_ID);
       const wornFeet = engine.getWornGear(PLAYER_ID).find((g) => g.slot === 'feet');
+      // §5.4's rolled price level means bread/shoes no longer always cost
+      // their catalog base price — read the real listing price rather than
+      // hardcoding one.
+      const breadPrice = engine.getMarketListing('market', 'bread')?.price ?? 2;
+      const shoesPrice = engine.getMarketListing('market', 'shoes')?.price ?? 15;
 
       // A work shift is 360 ticks — far longer than any Stage 2 action
       // (5-90 ticks) — so starting one needs a much bigger safety margin
@@ -143,11 +148,16 @@ describe('Stage 3 — First Job scenarios', () => {
         queuedType = 'draw_water';
       } else if (needs.hunger < 60 && findFirstActiveItem(engine.db, PLAYER_ID, 'bread')) {
         queuedType = 'eat';
-      } else if (needs.hunger < 60 && balance >= 2) {
+      } else if (needs.hunger < 60 && balance >= breadPrice) {
         queuedType = 'buy_bread';
-      } else if (needs.energy < 60) {
+      } else if (needs.energy < 60 || needs.warmth < 60) {
+        // §5.4's rolled starting season can now genuinely be winter — a
+        // bunk rest restores warmth as well as energy (demoWorld.ts's
+        // rest_bunk), so this is also this script's cold-weather response;
+        // it never modeled a separate cloak purchase, and doesn't need to
+        // as long as a cheap (3 coin) bunk stays reachable.
         queuedType = balance >= REST_BUNK_PRICE ? 'rest_bunk' : 'rest_rough';
-      } else if (!wornFeet && balance >= 15) {
+      } else if (!wornFeet && balance >= shoesPrice) {
         queuedType = 'buy_shoes';
       } else if (needs.thirst >= 75 && needs.hunger >= 75 && needs.energy >= 75) {
         queuedType = WORK_SHIFT_TYPE;

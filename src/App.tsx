@@ -7,6 +7,7 @@ import { Engine } from './engine/engine';
 import { seedDemoWorld, PLAYER_ID } from './engine/seed/demoWorld';
 import { createUiApi, type UiApi } from './engine/ui-api';
 import { useGameClock } from './hooks/useGameClock';
+import { BusinessScreen } from './screens/BusinessScreen';
 import { HouseholdScreen } from './screens/HouseholdScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { LocationScreen } from './screens/LocationScreen';
@@ -19,7 +20,8 @@ type View =
   | { kind: 'location'; siteId: string }
   | { kind: 'jobs' }
   | { kind: 'household'; householdId: string }
-  | { kind: 'npc'; entityId: string };
+  | { kind: 'npc'; entityId: string }
+  | { kind: 'business'; companyId: string };
 
 function App() {
   const engineRef = useRef<Engine | null>(null);
@@ -103,11 +105,18 @@ function App() {
               onBack={() => setView({ kind: 'settlement' })}
               onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
             />
+          ) : view.kind === 'business' ? (
+            <BusinessScreen
+              uiApi={uiApi}
+              companyId={view.companyId}
+              onBack={() => setView({ kind: 'settlement' })}
+            />
           ) : (
             <SettlementScreen
               uiApi={uiApi}
               onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
               onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
+              onSelectBusiness={(companyId) => setView({ kind: 'business', companyId })}
             />
           )}
         </main>

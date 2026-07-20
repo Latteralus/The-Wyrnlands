@@ -80,17 +80,25 @@ describe.skip('SPIKE — pushing well past the 90-day exit test, checkpointed', 
         const balance = engine.getBalance(PLAYER_ID);
         const wornFeet = engine.getWornGear(PLAYER_ID).find((g) => g.slot === 'feet');
         const employed = engine.getEmployment(PLAYER_ID) !== null;
+        // §5.4's rolled price level means bread/shoes no longer always cost
+        // their catalog base price — read the real listing price rather
+        // than hardcoding one.
+        const breadPrice = engine.getMarketListing('market', 'bread')?.price ?? 2;
+        const shoesPrice = engine.getMarketListing('market', 'shoes')?.price ?? 15;
 
         let queuedType: string;
         if (needs.thirst < 60) {
           queuedType = 'draw_water';
         } else if (needs.hunger < 60 && findFirstActiveItem(engine.db, PLAYER_ID, 'bread')) {
           queuedType = 'eat';
-        } else if (needs.hunger < 60 && balance >= 2) {
+        } else if (needs.hunger < 60 && balance >= breadPrice) {
           queuedType = 'buy_bread';
-        } else if (needs.energy < 60) {
+        } else if (needs.energy < 60 || needs.warmth < 60) {
+          // §5.4's rolled starting season can now genuinely be winter — a
+          // bunk rest restores warmth as well as energy (demoWorld.ts's
+          // rest_bunk), so this is also this script's cold-weather response.
           queuedType = balance >= REST_BUNK_PRICE ? 'rest_bunk' : 'rest_rough';
-        } else if (!wornFeet && balance >= 15) {
+        } else if (!wornFeet && balance >= shoesPrice) {
           queuedType = 'buy_shoes';
         } else if (!employed) {
           queuedType = 'read_notices';

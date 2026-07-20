@@ -96,6 +96,12 @@ describe('Stage 2 — Survival Loop scenarios', () => {
       const needs = engine.getNeeds(PLAYER_ID)!;
       const balance = engine.getBalance(PLAYER_ID);
       const wornFeet = engine.getWornGear(PLAYER_ID).find((g) => g.slot === 'feet');
+      // §5.4's rolled price level means bread/shoes no longer always cost
+      // their catalog base price — read the real listing price rather than
+      // hardcoding one, or a high-priced roll makes this affordability
+      // check wrong and the script can never successfully buy anything.
+      const breadPrice = engine.getMarketListing('market', 'bread')?.price ?? 2;
+      const shoesPrice = engine.getMarketListing('market', 'shoes')?.price ?? 15;
 
       // Batching same-type actions before re-deciding (a peasant doesn't
       // make a separate market trip for every single loaf) keeps the total
@@ -111,12 +117,17 @@ describe('Stage 2 — Survival Loop scenarios', () => {
         queuedType = 'draw_water';
       } else if (needs.hunger < 50 && findFirstActiveItem(engine.db, PLAYER_ID, 'bread')) {
         queuedType = 'eat';
-      } else if (needs.hunger < 50 && balance >= 2) {
+      } else if (needs.hunger < 50 && balance >= breadPrice) {
         queuedType = 'buy_bread';
         batchSize = 3;
-      } else if (needs.energy < 40) {
+      } else if (needs.energy < 40 || needs.warmth < 40) {
+        // §5.4's rolled starting season can now genuinely be winter — a
+        // bunk rest restores warmth as well as energy (demoWorld.ts's
+        // rest_bunk), so this is also this script's cold-weather response;
+        // it never modeled a separate cloak purchase, and doesn't need to
+        // as long as a cheap (3 coin) bunk stays reachable.
         queuedType = balance >= REST_BUNK_PRICE ? 'rest_bunk' : 'rest_rough';
-      } else if (!wornFeet && balance >= 15) {
+      } else if (!wornFeet && balance >= shoesPrice) {
         queuedType = 'buy_shoes';
       } else if (!wornFeet) {
         queuedType = 'chop_wood'; // barefoot and broke — earn the coin for shoes
