@@ -1,29 +1,34 @@
-import { useState } from 'react';
 import { LogPanel } from '../components/LogPanel';
 import { SceneHeader } from '../components/SceneHeader';
 import { getLocationContent } from '../data/locationContent';
 import type { UiApi } from '../engine/ui-api';
 
+export type SettlementTab = 'locations' | 'households' | 'businesses' | 'log';
+
 interface SettlementScreenProps {
   uiApi: UiApi;
+  tab: SettlementTab;
+  onTabChange: (tab: SettlementTab) => void;
   onSelectSite: (siteId: string) => void;
   onSelectHousehold: (householdId: string) => void;
   onSelectBusiness: (companyId: string) => void;
 }
 
-type Tab = 'locations' | 'households' | 'businesses' | 'log';
-
 // §5.5 Navigation Model / §Stage 1: "settlement screen with clickable
 // locations (stub panels)... settlement log tab." §Stage 4 adds a
 // Households tab; §Stage 5 adds a Businesses tab (§14.2's NPC business view
-// needs a way in).
+// needs a way in). Tab selection is owned by App.tsx (not local state) so
+// it survives drilling into a location/household/business and back — this
+// screen remounts on every return trip since App.tsx renders it only in the
+// 'settlement' view branch.
 export function SettlementScreen({
   uiApi,
+  tab,
+  onTabChange,
   onSelectSite,
   onSelectHousehold,
   onSelectBusiness,
 }: SettlementScreenProps) {
-  const [tab, setTab] = useState<Tab>('locations');
   const sites = uiApi.listSites();
   const households = uiApi.listHouseholds();
   const companies = uiApi.listCompanies();
@@ -37,25 +42,25 @@ export function SettlementScreen({
         <button
           type="button"
           className={tab === 'locations' ? 'active' : ''}
-          onClick={() => setTab('locations')}
+          onClick={() => onTabChange('locations')}
         >
           Locations
         </button>
         <button
           type="button"
           className={tab === 'households' ? 'active' : ''}
-          onClick={() => setTab('households')}
+          onClick={() => onTabChange('households')}
         >
           Households
         </button>
         <button
           type="button"
           className={tab === 'businesses' ? 'active' : ''}
-          onClick={() => setTab('businesses')}
+          onClick={() => onTabChange('businesses')}
         >
           Businesses
         </button>
-        <button type="button" className={tab === 'log' ? 'active' : ''} onClick={() => setTab('log')}>
+        <button type="button" className={tab === 'log' ? 'active' : ''} onClick={() => onTabChange('log')}>
           Settlement Log
         </button>
       </div>

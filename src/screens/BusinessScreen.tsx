@@ -19,6 +19,12 @@ function describeStatus(company: { insolventSinceTick: number | null; closedAtTi
   return 'Open for business.';
 }
 
+function statusClass(company: { insolventSinceTick: number | null; closedAtTick: number | null }): string {
+  if (company.closedAtTick !== null) return 'business-status--closed';
+  if (company.insolventSinceTick !== null) return 'business-status--struggling';
+  return 'business-status--open';
+}
+
 export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps) {
   const calendar = uiApi.getCalendar();
   const company = uiApi.getCompany(companyId);
@@ -39,7 +45,7 @@ export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps
 
       {company && (
         <>
-          <p className="business-status">
+          <p className={`business-status ${statusClass(company)}`}>
             {company.kind[0]?.toUpperCase()}
             {company.kind.slice(1)} · tier {company.tier} · {describeStatus(company)}
           </p>

@@ -1,21 +1,28 @@
 :root {
-  --text: #6b6375;
-  --text-h: #08060d;
-  --bg: #fff;
-  --border: #e5e4e7;
-  --code-bg: #f4f3ec;
-  --accent: #aa3bff;
-  --accent-bg: rgba(170, 59, 255, 0.1);
-  --accent-border: rgba(170, 59, 255, 0.5);
-  --social-bg: rgba(244, 243, 236, 0.5);
-  --shadow: rgba(0, 0, 0, 0.1) 0 10px 15px -3px, rgba(0, 0, 0, 0.05) 0 4px 6px -2px;
+  /* Warm parchment / ink palette (§14.1 presentation language) — an
+     offline game can only rely on system font stacks, so the period feel
+     comes from color + a serif heading stack, not a downloaded typeface. */
+  --text: #5b4636;
+  --text-h: #2b1f14;
+  --bg: #faf5e9;
+  --surface: #f2e6cb;
+  --surface-2: #e6d3a8;
+  --border: #d9c39a;
+  --code-bg: #ece0c2;
+  --accent: #a06a1f;
+  --accent-h: #7d5218;
+  --accent-bg: rgba(160, 106, 31, 0.12);
+  --accent-border: rgba(160, 106, 31, 0.45);
+  --accent-2: #4b7a4f;
+  --danger: #a3382c;
+  --danger-bg: rgba(163, 56, 44, 0.12);
+  --shadow: rgba(43, 31, 20, 0.18) 0 6px 16px -4px, rgba(43, 31, 20, 0.1) 0 2px 6px -2px;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
-  --heading: system-ui, 'Segoe UI', Roboto, sans-serif;
+  --heading: 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, 'Times New Roman', serif;
   --mono: ui-monospace, Consolas, monospace;
 
-  font: 18px/145% var(--sans);
-  letter-spacing: 0.18px;
+  font: 16px/155% var(--sans);
   color-scheme: light dark;
   color: var(--text);
   background: var(--bg);
@@ -23,71 +30,81 @@
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-
-  @media (max-width: 1024px) {
-    font-size: 16px;
-  }
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --text: #9ca3af;
-    --text-h: #f3f4f6;
-    --bg: #16171d;
-    --border: #2e303a;
-    --code-bg: #1f2028;
-    --accent: #c084fc;
-    --accent-bg: rgba(192, 132, 252, 0.15);
-    --accent-border: rgba(192, 132, 252, 0.5);
-    --social-bg: rgba(47, 48, 58, 0.5);
-    --shadow: rgba(0, 0, 0, 0.4) 0 10px 15px -3px, rgba(0, 0, 0, 0.25) 0 4px 6px -2px;
+    /* "By candlelight" — warm, not the generic cool devtool dark mode. */
+    --text: #c7b696;
+    --text-h: #f3e6c9;
+    --bg: #1b1610;
+    --surface: #241c14;
+    --surface-2: #362a1c;
+    --border: #4a3a26;
+    --code-bg: #2c2318;
+    --accent: #dba54a;
+    --accent-h: #efc16d;
+    --accent-bg: rgba(219, 165, 74, 0.16);
+    --accent-border: rgba(219, 165, 74, 0.5);
+    --accent-2: #7fae7a;
+    --danger: #d9806a;
+    --danger-bg: rgba(217, 128, 106, 0.16);
+    --shadow: rgba(0, 0, 0, 0.55) 0 6px 16px -4px, rgba(0, 0, 0, 0.35) 0 2px 6px -2px;
   }
+}
 
-  #social .button-icon {
-    filter: invert(1) brightness(2);
-  }
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  /* Faint mottled-parchment wash — layered gradients only, no image asset. */
+  background-image:
+    radial-gradient(ellipse at 15% 0%, var(--surface) 0%, transparent 55%),
+    radial-gradient(ellipse at 85% 100%, var(--surface) 0%, transparent 55%);
+  background-attachment: fixed;
 }
 
 #root {
   width: 100%;
-  max-width: 1126px;
+  max-width: 1180px;
   margin: 0 auto;
   text-align: left;
-  border-inline: 1px solid var(--border);
   min-height: 100svh;
   display: flex;
   flex-direction: column;
   box-sizing: border-box;
 }
 
-body {
-  margin: 0;
-}
-
 h1,
-h2 {
+h2,
+h3,
+h4 {
   font-family: var(--heading);
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-h);
 }
 
 h1 {
-  font-size: 56px;
-  letter-spacing: -1.68px;
-  margin: 32px 0;
-  @media (max-width: 1024px) {
-    font-size: 36px;
-    margin: 20px 0;
-  }
+  font-size: 34px;
+  letter-spacing: -0.3px;
+  margin: 28px 0 4px;
 }
 h2 {
   font-size: 24px;
   line-height: 118%;
-  letter-spacing: -0.24px;
+  letter-spacing: -0.2px;
   margin: 0 0 8px;
-  @media (max-width: 1024px) {
-    font-size: 20px;
-  }
+}
+h3 {
+  font-size: 17px;
+  margin: 1.5rem 0 0.6rem;
+  padding-bottom: 0.3rem;
+  border-bottom: 1px solid var(--border);
+}
+h3:first-of-type {
+  margin-top: 1rem;
 }
 p {
   margin: 0;
@@ -102,8 +119,12 @@ code,
 }
 
 code {
-  font-size: 15px;
+  font-size: 14px;
   line-height: 135%;
-  padding: 4px 8px;
+  padding: 3px 7px;
   background: var(--code-bg);
+}
+
+::selection {
+  background: var(--accent-border);
 }

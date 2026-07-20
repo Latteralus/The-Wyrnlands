@@ -4,6 +4,25 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-07-20 — Presentation pass: a real theme, plus two navigation/layout bugs found by screenshotting it
+
+Not a Stage 5 slice — a documentation-review + UX/UI pass across the whole customer-facing surface, requested directly rather than derived from MASTERPLAN's stage list. `src/index.css` and `src/App.css` had never been touched since Vite's scaffold: the "boot-screen"/"social"/`.counter` class names, the `#aa3bff` accent, and the unused `--social-bg`/`#social .button-icon` rule (targeting an id that doesn't exist anywhere in this app) were all leftover template CSS, not a deliberate placeholder — confirmed by diffing against a fresh `npm create vite`. §14.1's "Presentation Language" (illustrated/season-tinted panels, a consistent icon set, light animation, atmospheric writing) had the *structural* wiring (`SceneHeader`'s season/time classes, `locationContent.ts`'s icons) but none of the visual identity it was built to carry.
+
+**What was built:** a full palette/typography rework in `index.css` and `App.css` — warm parchment/ink light theme and a "by candlelight" dark theme (both still system-font-only: `--heading` is a serif stack, `--sans`/`--mono` unchanged — this is an offline game, so no downloaded webfont), a global base `button` style, themed cards/tabs/badges, and a `prefers-reduced-motion` guard on the new hover/log-entry animations. No engine code touched; no new dependencies.
+
+**Two real bugs found by actually screenshotting the result (Playwright against the dev server, light+dark, all six screens), not just eyeballing the CSS:**
+
+1. **Illegible winter/night scene headers.** The old `.time-night` rule applied `filter: brightness(0.55)` on top of season gradients that already had their own hardcoded text colors (`.season-winter` set dark text for its pale gradient) — at night the two rules fought, leaving low-contrast text on a muddy gray background. Replaced with a dedicated dark overlay gradient layered via `background-image` (season hue preserved as a `--scene-grad` custom property) plus a fixed cream text color and `text-shadow` on every scene header regardless of season/time — contrast is now guaranteed by construction instead of by per-variant color tuning.
+2. **Settlement tab reset on back-navigation.** `SettlementScreen` kept its Locations/Households/Businesses/Log tab in local `useState`. App.tsx only renders `SettlementScreen` in one `view.kind === 'settlement'` branch, so it unmounts on every drill-down and remounts fresh — meaning "Businesses → open a business → back" silently dropped the player back on the Locations tab. Caught by a scripted screenshot loop that clicked through all four business cards and got location cards on the second iteration instead. Fixed by lifting tab state into `App.tsx` (`SettlementTab`, exported from `SettlementScreen.tsx`) as a controlled prop, same pattern `view` already uses.
+
+Also fixed while in the CSS: several screens had bare, unclassed `<button>`s (NPC presence-roster chips, household member rows, "Quit your job", "Browse job openings →") that rendered as native OS buttons because no rule matched them — only `.time-controls button`/`.tabs button`/`.location-actions button`/`.job-actions button` existed, not a base case. A global `button` rule now covers every button by default. Business status (open/struggling/closed) and household member employment status also got conditional color classes (`business-status--open/struggling/closed`, `household-member-status.is-employed`) for at-a-glance state instead of reading the sentence.
+
+**Verification:** `npm run validate` passes clean (typecheck, lint, format, 94 tests/1 skipped, build). Visual verification was real, not assumed — a Playwright script drove the actual Vite dev server through all six screens (Settlement × 3 tabs, Location, Household, NPC profile, all four Businesses, Jobs) in both `light` and `dark` `colorScheme`, with before/after screenshots compared directly; both bugs above were caught this way, not by code reading alone.
+
+**Explicitly not attempted:** real illustrated location art or NPC portraits (§14.1 itself calls these a separately budgeted art-pipeline deliverable, not something a CSS pass can produce) and the atmospheric-writing pass (§18's "Writing workload," also separately budgeted) — this pass only reskins and fixes the existing structural wiring.
+
+---
+
 ## 2026-07-20 — The Closed Economy, slice 5: rolled starting conditions (§Stage 5, in progress)
 
 Continues slices 1-4 (see the four entries below, all 2026-07-19). Builds §5.4 "Starting Conditions Are Rolled: World generation seeds the situation, not just the map... Two new games in the same village play differently." Also the story of three real, pre-existing bugs this slice's own testing exposed and fixed — none of them new mistakes in this slice's code, all of them found because this was the first thing to genuinely vary the game's starting season.

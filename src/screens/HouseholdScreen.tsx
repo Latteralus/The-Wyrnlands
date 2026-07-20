@@ -38,7 +38,9 @@ export function HouseholdScreen({ uiApi, householdId, onBack, onSelectNpc }: Hou
               <button type="button" onClick={() => onSelectNpc(entityId)}>
                 {entity?.name ?? entityId}
               </button>
-              <span className="household-member-status">{employment ? ' employed' : ' unemployed'}</span>
+              <span className={`household-member-status${employment ? ' is-employed' : ''}`}>
+                {employment ? ' employed' : ' unemployed'}
+              </span>
             </li>
           );
         })}

@@ -12,7 +12,7 @@ import { HouseholdScreen } from './screens/HouseholdScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { LocationScreen } from './screens/LocationScreen';
 import { NpcProfileScreen } from './screens/NpcProfileScreen';
-import { SettlementScreen } from './screens/SettlementScreen';
+import { SettlementScreen, type SettlementTab } from './screens/SettlementScreen';
 import './App.css';
 
 type View =
@@ -27,6 +27,10 @@ function App() {
   const engineRef = useRef<Engine | null>(null);
   const [uiApi, setUiApi] = useState<UiApi | null>(null);
   const [view, setView] = useState<View>({ kind: 'settlement' });
+  // Owned here (not inside SettlementScreen) so it survives drilling into a
+  // location/household/business and back — SettlementScreen remounts fresh
+  // each time it becomes the active view.
+  const [settlementTab, setSettlementTab] = useState<SettlementTab>('locations');
   // Unread on purpose — its setter just forces a re-render so screens re-query
   // uiApi (a thin sync SQLite wrapper) after a tick batch or a queued action.
   const [, bumpCounter] = useState(0);
@@ -114,6 +118,8 @@ function App() {
           ) : (
             <SettlementScreen
               uiApi={uiApi}
+              tab={settlementTab}
+              onTabChange={setSettlementTab}
               onSelectSite={(siteId) => setView({ kind: 'location', siteId })}
               onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
               onSelectBusiness={(companyId) => setView({ kind: 'business', companyId })}
