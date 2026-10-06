@@ -1,5 +1,6 @@
 import { getGoodDefinition } from '../goods/catalog';
 import { listAllMarketListings } from './market';
+import { referenceStockFor } from './merchant';
 import type { Database } from 'sql.js';
 
 // §8.1 rule 4: "target price = base × scarcity × demand × local × seasonal;
@@ -10,8 +11,12 @@ import type { Database } from 'sql.js';
 // real refinement for later, not modeled yet — flagged, not silently
 // dropped (no per-settlement regions or seasons-affecting-price exist
 // before Stage 5/7 anyway).
-const MIN_SCARCITY_MULTIPLIER = 0.5;
-const MAX_SCARCITY_MULTIPLIER = 2.5;
+// Narrowed from [0.5, 2.5] in the 2026-10-06 balancing pass: at 0.5× a
+// glutted good sold at or below what its own input cost (flour at the
+// price of grain), so one lumpy week of stock was enough to bankrupt the
+// mill. At 0.75× every link in the chain still clears a margin at its floor.
+const MIN_SCARCITY_MULTIPLIER = 0.75;
+export const MAX_SCARCITY_MULTIPLIER = 2;
 const DRIFT_FRACTION = 0.1; // "~10% of the gap per interval"
 const MIN_PRICE = 1;
 
@@ -39,7 +44,9 @@ export function computeTargetPrice(
 export function driftMarketPrices(db: Database): void {
   for (const listing of listAllMarketListings(db)) {
     const basePrice = getGoodDefinition(listing.goodType).basePrice;
-    const target = computeTargetPrice(basePrice, listing.quantity, listing.referenceStock);
+    // The catalog's per-good reference stock (goods/catalog.ts) when it has
+    // one; the listing's own seeded value otherwise.
+    const target = computeTargetPrice(basePrice, listing.quantity, referenceStockFor(listing));
     const gap = target - listing.price;
     if (gap === 0) continue;
 

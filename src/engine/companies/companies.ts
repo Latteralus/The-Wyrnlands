@@ -31,11 +31,13 @@ export interface Company {
   // terminated, remaining equipment auctioned — see companies/decisions.ts's
   // tryCloseCompany).
   closedAtTick: number | null;
+  // §9.5: the tick of the last upgrade, for decisions.ts's cooldown.
+  lastUpgradedTick: number | null;
 }
 
 export function createCompany(
   db: Database,
-  company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick'>,
+  company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick' | 'lastUpgradedTick'>,
 ): void {
   db.run('INSERT INTO companies (id, name, kind, site_id) VALUES (?, ?, ?, ?)', [
     company.id,
@@ -49,7 +51,8 @@ export function setCompanyOwner(db: Database, companyId: string, ownerId: string
   db.run('UPDATE companies SET owner_id = ? WHERE id = ?', [ownerId, companyId]);
 }
 
-const COMPANY_COLUMNS = 'id, name, kind, site_id, owner_id, insolvent_since_tick, tier, closed_at_tick';
+const COMPANY_COLUMNS =
+  'id, name, kind, site_id, owner_id, insolvent_since_tick, tier, closed_at_tick, last_upgraded_tick';
 
 function rowToCompany(row: unknown[]): Company {
   return {
@@ -61,6 +64,7 @@ function rowToCompany(row: unknown[]): Company {
     insolventSinceTick: row[5] === null ? null : Number(row[5]),
     tier: Number(row[6]),
     closedAtTick: row[7] === null ? null : Number(row[7]),
+    lastUpgradedTick: row[8] === null || row[8] === undefined ? null : Number(row[8]),
   };
 }
 
@@ -79,8 +83,8 @@ export function setCompanyInsolvency(db: Database, companyId: string, sinceTick:
 
 // §9.5: raises a company's tier by one — companies/decisions.ts's tryUpgrade
 // is the only caller, and it's responsible for the capacity/cost side.
-export function bumpCompanyTier(db: Database, companyId: string): void {
-  db.run('UPDATE companies SET tier = tier + 1 WHERE id = ?', [companyId]);
+export function bumpCompanyTier(db: Database, companyId: string, tick: number): void {
+  db.run('UPDATE companies SET tier = tier + 1, last_upgraded_tick = ? WHERE id = ?', [tick, companyId]);
 }
 
 // §9.6 "permanent failure": marks a company closed for good — companies/
@@ -96,7 +100,9 @@ export function closeCompany(db: Database, companyId: string, tick: number): voi
 // weighted daily calls, and what any future business-log screen (§14.3)
 // would read to narrate a company's history without re-deriving it from the
 // whole event_log.
-export type LedgerEntryKind = 'revenue' | 'material_cost' | 'wage' | 'tax';
+// owner_draw (§9.3): profit paid out to the owner's household — equity, not
+// an operating cost, so it's reported separately and excluded from net.
+export type LedgerEntryKind = 'revenue' | 'material_cost' | 'wage' | 'tax' | 'owner_draw';
 
 export function recordLedgerEntry(
   db: Database,
@@ -105,14 +111,30 @@ export function recordLedgerEntry(
   kind: LedgerEntryKind,
   amount: number,
   note?: string,
+  // Units traded, for a sale or purchase line (see recentDailySalesUnits).
+  quantity?: number,
 ): void {
-  db.run('INSERT INTO company_ledger_entries (company_id, tick, kind, amount, note) VALUES (?, ?, ?, ?, ?)', [
-    companyId,
-    tick,
-    kind,
-    amount,
-    note ?? null,
-  ]);
+  db.run(
+    'INSERT INTO company_ledger_entries (company_id, tick, kind, amount, note, quantity) VALUES (?, ?, ?, ?, ?, ?)',
+    [companyId, tick, kind, amount, note ?? null, quantity ?? null],
+  );
+}
+
+// Units this company sold to local buyers per day over a trailing window
+// (merchant exports are recorded without a quantity on purpose — dumping a
+// glut isn't demand to plan for).
+export function recentDailySalesUnits(
+  db: Database,
+  companyId: string,
+  sinceTick: number,
+  days: number,
+): number {
+  const row = queryRow(
+    db,
+    "SELECT COALESCE(SUM(quantity), 0) FROM company_ledger_entries WHERE company_id = ? AND kind = 'revenue' AND tick > ?",
+    [companyId, sinceTick],
+  );
+  return Number(row?.[0] ?? 0) / days;
 }
 
 export interface LedgerSummary {
@@ -121,6 +143,7 @@ export interface LedgerSummary {
   wages: number;
   tax: number;
   net: number;
+  ownerDraws: number;
 }
 
 export function summarizeLedger(db: Database, companyId: string, sinceTick: number): LedgerSummary {
@@ -130,7 +153,7 @@ export function summarizeLedger(db: Database, companyId: string, sinceTick: numb
      WHERE company_id = ? AND tick >= ? GROUP BY kind`,
     [companyId, sinceTick],
   );
-  const summary: LedgerSummary = { revenue: 0, materialCost: 0, wages: 0, tax: 0, net: 0 };
+  const summary: LedgerSummary = { revenue: 0, materialCost: 0, wages: 0, tax: 0, net: 0, ownerDraws: 0 };
   for (const row of rows) {
     const amount = Number(row[1]);
     switch (String(row[0]) as LedgerEntryKind) {
@@ -145,6 +168,9 @@ export function summarizeLedger(db: Database, companyId: string, sinceTick: numb
         break;
       case 'tax':
         summary.tax = amount;
+        break;
+      case 'owner_draw':
+        summary.ownerDraws = amount;
         break;
     }
   }

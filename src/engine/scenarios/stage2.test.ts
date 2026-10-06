@@ -84,10 +84,14 @@ describe('Stage 2 — Survival Loop scenarios', () => {
       // always runs an action to full completion first, so a pending
       // buy_shoes is guaranteed resolved by now.
       if (pendingShoesEndsAt !== null) {
-        const itemId = `${PLAYER_ID}-shoes-${pendingShoesEndsAt}`;
-        if (engine.getItem(itemId)?.status === 'active') {
-          engine.equipItem(PLAYER_ID, itemId);
-          latestReplacementShoesId = itemId;
+        // Whatever pair the player now carries but isn't wearing is the one
+        // just bought (the market decides its id — a real stocked pair or a
+        // merchant import — so don't assume one).
+        const wornId = engine.getWornGear(PLAYER_ID).find((g) => g.slot === 'feet')?.itemId;
+        const bought = findFirstActiveItem(engine.db, PLAYER_ID, 'shoes');
+        if (bought && bought.id !== wornId) {
+          engine.equipItem(PLAYER_ID, bought.id);
+          latestReplacementShoesId = bought.id;
           shoesPurchaseCount++;
         }
         pendingShoesEndsAt = null;

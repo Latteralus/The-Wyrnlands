@@ -32,14 +32,10 @@ export function loadSqlJs(): Promise<SqlJsStatic> {
 // class, with the second instance staying fully healthy after the first was
 // deliberately stress-filled.
 //
-// This matters because each WASM instance's linear memory only ever grows
-// and is never reclaimed by the runtime — see checkpoint.ts's header
-// comment for the full mechanism. This is what actually lets a long-running
-// simulation escape accumulated heap damage; without it, checkpoint.ts's
-// export/rehydrate cycle preserves state correctly (proven in
-// checkpoint.test.ts) but doesn't fix the underlying memory problem at all,
-// since "fresh" Database objects built this way were still sharing the one
-// real heap.
+// This used to be load-bearing for long runs (a fresh module reset the
+// stack that sql.js's db.exec() leaked — see db/sqlite.ts and
+// checkpoint.ts's header); since the engine stopped calling exec(), it's
+// only needed for checkpoint.ts's save/reload-in-a-fresh-module facility.
 //
 // Node/CJS-only — there's no browser-side equivalent of require-cache
 // invalidation for a statically-imported ES module (see sqlite.browser.ts's

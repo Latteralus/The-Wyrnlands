@@ -45,29 +45,16 @@ const SEASON_SEED = 'stage4-season';
 // that floor is genuinely running for the whole population over the whole
 // run, not that the number 35 is hardcoded past the assertions.
 //
-// §Stage 5 update (2026-07-19): the elapsedMs budget below was widened from
-// 300s to 700s after real, instrumented investigation (not a guess) found
-// this run now genuinely takes ~380-500s, up from the ~165s recorded when
-// this test was last verified (before Stage 5's companies existed). Ruled
-// out empirically, in this order: (1) checkpoint export/import cost itself
-// — measured directly at every checkpoint, stays flat at ~20-30ms
-// throughout the whole run, not the cause; (2) a missing index on
-// items(container_id, type, status), the exact shape every hot production/
-// market query filters by — added (migration 0013) but made no measurable
-// difference; (3) checkpoint interval — shortened to 5 days as a test, the
-// same total slowdown reappeared unchanged, ruling out "checkpoint less
-// often" as fixable via interval tuning. What's left, not yet diagnosed
-// further: per-operation cost inside a single WASM module instance appears
-// to genuinely creep up as total accumulated simulation history (item/
-// event/provenance row counts) grows, independent of which specific table a
-// given operation touches — the same "per-checkpoint cost appeared to be
-// rising... not diagnosed further" finding the 2026-07-18 730-day stress
-// test first flagged (see the wyrnlands-sqljs-memory-ceiling memory and
-// DECISIONS.md), now confirmed to matter at 90-day/Stage-5-economic-scale,
-// not just at 300+ days. Stage 5's own eventual 2-year exit test cannot be
-// trusted to "just work" until this is understood, not merely widened
-// around again — a named, real follow-up, not silently absorbed into a
-// bigger number forever.
+// Performance history: this run took ~165s before Stage 5, then 380-500s
+// (budget widened to 700s) once Stage 5's companies added volume. Root-
+// caused 2026-10-06 (PERFORMANCE_AUDIT.md): actionQueue.ts's per-tick
+// getCurrentAction walked the actor's whole action history (fixed by the
+// partial index in migration 0017), and the old "memory ceiling" was
+// sql.js's db.exec() leaking 16 bytes of WASM stack per call (db/sqlite.ts
+// no longer uses exec()). This run now takes ~25s; the budget below is
+// generous margin, not a tuned number. Checkpointing is no longer needed
+// to survive long runs but is kept here as a real exercise of save/reload
+// mid-run.
 describe('Stage 4 — Living NPCs & Households scenarios', () => {
   it('generates ~40 NPCs into households, with some employed at each company', async () => {
     const SQL = await loadSqlJs();
@@ -194,13 +181,8 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     const elapsedMs = Date.now() - start;
     // Not a literal "16x screen speed" measurement (that's a browser/UI
     // concern) — this is the headless equivalent: a full 90-day, ~40-NPC
-    // run (plus several checkpoints, each a real wasm recompile) must
-    // complete in a bounded time, not hang or grind indefinitely. Widened to
-    // 700s for §Stage 5 (see this file's header comment for the real,
-    // instrumented investigation behind the number) — real runs currently
-    // land around 380-500s; this is margin over an unresolved, worsening
-    // cost, not a tuned budget.
-    expect(elapsedMs).toBeLessThan(700_000);
+    // run must complete in a bounded time. Real runs: ~25s (2026-10-06).
+    expect(elapsedMs).toBeLessThan(120_000);
 
     // No baseline starvation, across the whole population, not just the
     // player.
@@ -221,8 +203,10 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     expect(checkedMembers).toBeGreaterThanOrEqual(30);
 
     // Consumption traceable: spot-check a household's eaten bread has a
-    // full produced → consumed provenance chain, same standard as the
-    // player's own consumption (§Stage 2/3).
+    // full provenance chain, same standard as the player's own consumption
+    // (§Stage 2/3) — produced → consumed for a merchant import, or produced
+    // → transferred (bakery to market) → transferred (market to household)
+    // → consumed for a real local loaf.
     const consumedBreadEvents = engine
       .queryLog('business', 5000)
       .filter((e) => e.type === 'item.consumed' && (e.data?.type as string | undefined) === 'bread');
@@ -230,8 +214,10 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     for (const event of consumedBreadEvents.slice(0, 10)) {
       const itemId = event.data?.itemId as string | undefined;
       expect(itemId).toBeTruthy();
-      const chain = engine.getProvenanceChain(itemId!);
-      expect(chain.map((e) => e.eventType)).toEqual(['produced', 'consumed']);
+      const types = engine.getProvenanceChain(itemId!).map((e) => e.eventType);
+      expect(types[0]).toBe('produced');
+      expect(types[types.length - 1]).toBe('consumed');
+      expect(types.slice(1, -1).every((t) => t === 'transferred')).toBe(true);
     }
 
     // Conservation held throughout, at population scale — no drift, no
@@ -240,7 +226,7 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     expect(engine.runConservationAudit().passed).toBe(true);
 
     engine.dispose();
-  }, 800_000);
+  }, 240_000);
 
   it('a scripted job loss produces the logged adaptation cascade (§10)', async () => {
     const SQL = await loadSqlJs();

@@ -3,6 +3,7 @@ import { findFirstActiveItem } from '../inventory/items';
 import { createWorkShiftActionDefinition } from '../jobs/shifts';
 import { createBuyActionDefinition, createSellActionDefinition } from '../market/market';
 import { withOptional } from '../optional';
+import { ensureParish, PARISH_ID } from '../population/cadence';
 import { generateNpcPopulation } from '../population/npcGen';
 import {
   BAKING_SKILL,
@@ -22,7 +23,7 @@ import type { Engine } from '../engine';
 // starting conditions in Stage 5 (§5.4).
 export const PLAYER_ID = 'player';
 
-export const REST_BUNK_PRICE = 3;
+export const REST_BUNK_PRICE = 15;
 const REST_BUNK_ENERGY = 50;
 const REST_ROUGH_ENERGY = 20;
 const SHOE_WEAR_PER_CHOP = 10; // maxDurability 200 → wears out roughly every 20 chops
@@ -31,8 +32,8 @@ export const FARM_SITE_ID = 'farm';
 export const FARM_COMPANY_ID = 'oster_farm';
 export const FARM_JOB_SLOT_ID = 'oster_farm_farmhand';
 export const FARM_SHIFT_DURATION_TICKS = 360; // a six-hour shift (§14.4)
-const FARM_WAGE_MIN = 3;
-const FARM_WAGE_MAX = 6;
+const FARM_WAGE_MIN = 20;
+const FARM_WAGE_MAX = 35;
 // Sized for up to FARM_JOB_CAPACITY workers' wages over a full 90-day season
 // even before §Stage 5's grain-selling revenue ramps up — generous headroom
 // rather than a tightly-balanced number (§17's balance harness is the place
@@ -40,16 +41,16 @@ const FARM_WAGE_MAX = 6;
 // long enough run with badly-managed selling is a realistic outcome
 // (§11.5), not a bug — see shifts.ts's affordableWage cap for what happens
 // when it does, and companies/decisions.ts's insolvency signal.
-const FARM_STARTING_CAPITAL = 2500;
-const FARM_JOB_CAPACITY = 4; // the owner-operator, a couple of NPC farmhands, and a slot left open for the player
+const FARM_STARTING_CAPITAL = 12500;
+const FARM_JOB_CAPACITY = 10; // the farm is the village's main employer (§3): most hands work the land
 
 export const LOGGING_SITE_ID = 'forest'; // the camp works out of the existing forest site, no new location needed
 export const LOGGING_COMPANY_ID = 'hollows_edge_logging';
 export const LOGGING_JOB_SLOT_ID = 'hollows_edge_logging_woodcutter';
 const LOGGING_SHIFT_DURATION_TICKS = 360;
-const LOGGING_WAGE_MIN = 3;
-const LOGGING_WAGE_MAX = 6;
-const LOGGING_STARTING_CAPITAL = 2500;
+const LOGGING_WAGE_MIN = 15;
+const LOGGING_WAGE_MAX = 30;
+const LOGGING_STARTING_CAPITAL = 12500;
 const LOGGING_JOB_CAPACITY = 4; // the owner-operator plus the same 3 NPC woodcutters as before (still none open for the player)
 
 // §Stage 5's first real transformation chain: grain (farm) -> flour (mill)
@@ -61,18 +62,18 @@ export const MILL_SITE_ID = 'mill';
 export const MILL_COMPANY_ID = 'riverside_mill';
 export const MILL_JOB_SLOT_ID = 'riverside_mill_miller';
 const MILL_SHIFT_DURATION_TICKS = 360;
-const MILL_WAGE_MIN = 3;
-const MILL_WAGE_MAX = 6;
-const MILL_STARTING_CAPITAL = 500;
+const MILL_WAGE_MIN = 20;
+const MILL_WAGE_MAX = 35;
+const MILL_STARTING_CAPITAL = 2500;
 const MILL_JOB_CAPACITY = 2;
 
 export const BAKERY_SITE_ID = 'bakery';
 export const BAKERY_COMPANY_ID = 'village_bakery';
 export const BAKERY_JOB_SLOT_ID = 'village_bakery_baker';
 const BAKERY_SHIFT_DURATION_TICKS = 360;
-const BAKERY_WAGE_MIN = 3;
-const BAKERY_WAGE_MAX = 6;
-const BAKERY_STARTING_CAPITAL = 500;
+const BAKERY_WAGE_MIN = 20;
+const BAKERY_WAGE_MAX = 35;
+const BAKERY_STARTING_CAPITAL = 2500;
 const BAKERY_JOB_CAPACITY = 2;
 
 // §9.2 "some NPC companies are simply better run than others." Each
@@ -96,7 +97,7 @@ const FARM_OWNER_MANAGEMENT_XP = 650; // level 3
 const LOGGING_OWNER_MANAGEMENT_XP = 450; // level 2
 const MILL_OWNER_MANAGEMENT_XP = 1100; // level 5
 const BAKERY_OWNER_MANAGEMENT_XP = 50; // level 0
-const OWNER_STARTING_RESERVE = 80; // same placeholder "modest family savings" as generated NPC households
+const OWNER_STARTING_RESERVE = 400; // same placeholder "modest family savings" as generated NPC households
 
 // §5.4 "Starting Conditions Are Rolled... the recent harvest quality, each
 // business's health... current season, price levels, and job availability.
@@ -112,6 +113,7 @@ const PRICE_LEVEL_MIN = 0.85;
 const PRICE_LEVEL_RANGE = 0.4; // rolls a market-wide price level in [0.85, 1.25)
 const MAX_STARTING_GRAIN = 40; // a bountiful recent harvest leaves the farm with up to this much grain already in store
 const FAILED_BUSINESS_CHANCE = 0.2; // §5.4's own example: "one may be freshly failed — the shuttered mill opening"
+const PARISH_ENDOWMENT = 500;
 
 function rolledPrice(basePrice: number, priceLevel: number): number {
   return Math.max(1, Math.round(basePrice * priceLevel));
@@ -290,7 +292,7 @@ export function seedDemoWorld(engine: Engine): void {
 
   engine.createEntity(PLAYER_ID, 'You');
   engine.ensureWallet(PLAYER_ID);
-  engine.faucetCoin(PLAYER_ID, 20, 'Started with 20 coin scraped together before leaving home.');
+  engine.faucetCoin(PLAYER_ID, 100, 'Started with 100 coin scraped together before leaving home.');
   engine.ensureNeeds(PLAYER_ID);
   engine.ensureSkill(PLAYER_ID, LABOR_SKILL);
 
@@ -302,6 +304,11 @@ export function seedDemoWorld(engine: Engine): void {
 
   // Starting gear (§6: "the early game's shopping list... eventually your
   // own tools" starts with what you leave home wearing).
+  // §8.2 stabilizer: the parish's charity fund starts with a modest
+  // endowment and is topped up by tithes (population/cadence.ts).
+  ensureParish(engine.db);
+  engine.faucetCoin(PARISH_ID, PARISH_ENDOWMENT, 'The parish poor-box, as you find it.', 'business');
+
   engine.produceItem({
     id: 'player-starting-shoes',
     type: 'shoes',
@@ -310,6 +317,22 @@ export function seedDemoWorld(engine: Engine): void {
     note: 'The shoes you left home in.',
   });
   engine.equipItem(PLAYER_ID, 'player-starting-shoes');
+
+  // A rolled winter start (§5.4) used to be unwinnable for a new player:
+  // an uncloaked 6-hour shift burns 75 warmth, a 3-coin bunk restores 30,
+  // the wage is a few coin and a cloak costs ~30 against 20 starting coin
+  // (STAGE5_AUDIT.md). Nobody sets out in midwinter without one — a winter
+  // start begins wearing an old, half-worn cloak.
+  if (engine.calendar.season === 'winter') {
+    engine.produceItem({
+      id: 'player-starting-cloak',
+      type: 'cloak',
+      containerId: PLAYER_ID,
+      durability: Math.floor((getGoodDefinition('cloak').maxDurability ?? 300) / 2),
+      note: 'An old cloak, patched at the elbows — nobody sets out in midwinter without one.',
+    });
+    engine.equipItem(PLAYER_ID, 'player-starting-cloak');
+  }
 
   // Bread stock is a bridging safety buffer, not the settlement's whole
   // supply anymore — §Stage 5's bakery (below) is meant to take over real
@@ -321,10 +344,34 @@ export function seedDemoWorld(engine: Engine): void {
   // §5.4 "price levels": every starting listing scales with this world's
   // own rolled priceLevel — two new games can open with genuinely different
   // costs of living, not just different names.
-  engine.seedMarketListing('market', 'bread', rolledPrice(2, priceLevel), 1000);
-  engine.seedMarketListing('market', 'shoes', rolledPrice(15, priceLevel), 20);
-  engine.seedMarketListing('market', 'cloak', rolledPrice(25, priceLevel), 10);
-  engine.seedMarketListing('market', 'firewood', rolledPrice(3, priceLevel), 0);
+  // 2026-10-06 balancing pass: 1000 → 150. The merchant now restocks bread
+  // whenever the town runs short and the price climbs (market/merchant.ts),
+  // so the seeded stock only has to bridge the chain's first week or two,
+  // not stand in for it.
+  engine.seedMarketListing(
+    'market',
+    'bread',
+    rolledPrice(getGoodDefinition('bread').basePrice, priceLevel),
+    150,
+  );
+  engine.seedMarketListing(
+    'market',
+    'shoes',
+    rolledPrice(getGoodDefinition('shoes').basePrice, priceLevel),
+    20,
+  );
+  engine.seedMarketListing(
+    'market',
+    'cloak',
+    rolledPrice(getGoodDefinition('cloak').basePrice, priceLevel),
+    10,
+  );
+  engine.seedMarketListing(
+    'market',
+    'firewood',
+    rolledPrice(getGoodDefinition('firewood').basePrice, priceLevel),
+    0,
+  );
   // §Stage 5 §9.4: "bought from toolmakers (or the merchant faucet early
   // on)" — no toolmaker company exists yet, so company equipment purchasing
   // (companies/decisions.ts's restockEquipment) buys replacements from here,

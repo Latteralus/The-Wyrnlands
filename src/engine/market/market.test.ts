@@ -3,7 +3,9 @@ import { summarizeLedger } from '../companies/companies';
 import { createDatabase } from '../db/sqlite';
 import { loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
+import { getGoodDefinition } from '../goods/catalog';
 import {
+  buyFromMarket,
   companyBuyFromMarket,
   createBuyActionDefinition,
   createSellActionDefinition,
@@ -65,7 +67,7 @@ describe('market', () => {
     engine.queueAction('villager-3', 'sell_firewood');
     engine.advanceTicks(10);
 
-    expect(engine.getBalance('villager-3')).toBe(3); // firewood's catalog base price
+    expect(engine.getBalance('villager-3')).toBe(getGoodDefinition('firewood').basePrice); // the stall pays catalog price
     expect(engine.getItem('firewood-1')?.status).toBe('active'); // transferred, not destroyed
     expect(engine.getItem('firewood-1')?.containerId).toBe('market-stock');
     expect(engine.getMarketListing('market', 'firewood')?.quantity).toBe(1);
@@ -141,6 +143,64 @@ describe('market', () => {
     expect(bought).toBe(2); // capped by mill-co's own coin, not the requested 5
     expect(engine.getBalance('mill-co')).toBe(1);
     expect(engine.getBalance('farm-co')).toBe(6);
+
+    engine.dispose();
+  });
+
+  // §8.1 rule 1: the units a buyer receives are the real consigned units,
+  // not freshly conjured copies — previously the farm's grain sat in
+  // market stock forever while the mill got new grain from nowhere.
+  it('a purchase takes the real consigned units out of market stock, oldest first, provenance intact', async () => {
+    const SQL = await loadSqlJs();
+    const engine = Engine.bootstrap(createDatabase(SQL), { seed: 'market-physical' });
+    engine.createSite({ id: 'market', name: 'Market', kind: 'market', x: 0, y: 0 });
+    engine.createCompany({ id: 'farm-co', name: 'Farm Co', kind: 'farm', siteId: 'market' });
+    for (let i = 0; i < 3; i++)
+      engine.produceItem({ id: `grain-${i}`, type: 'grain', containerId: 'farm-co' });
+    sellSurplusToMarket(engine.db, engine.bus, 'farm-co', 'market', 'grain', 3, 2, engine.tick);
+    engine.createCompany({ id: 'mill-co', name: 'Mill Co', kind: 'mill', siteId: 'market' });
+    engine.faucetCoin('mill-co', 100, 'capital');
+    const goodsBefore = engine.runConservationAudit().goods.actual;
+
+    const purchase = buyFromMarket(engine.db, engine.bus, 'mill-co', 'market', 'grain', 2, engine.tick);
+
+    expect(purchase.itemIds).toEqual(['grain-0', 'grain-1']);
+    expect(engine.getItem('grain-0')?.containerId).toBe('mill-co');
+    expect(engine.getItem('grain-2')?.containerId).toBe('market-stock'); // the unsold one stays put
+    expect(engine.getProvenanceChain('grain-0').map((e) => e.eventType)).toEqual([
+      'produced',
+      'transferred',
+      'transferred',
+    ]);
+    expect(engine.runConservationAudit().goods.actual).toBe(goodsBefore); // moved, not duplicated
+    expect(engine.getMarketListing('market', 'grain')?.quantity).toBe(1);
+    expect(engine.getBalance('farm-co')).toBe(4);
+
+    engine.dispose();
+  });
+
+  // The old single producer_company_id paid the most recent local producer
+  // for EVERY unit sold — including merchant-import stock it never made.
+  it("merchant-import units sink the buyer's coin; only the producer's own consigned units pay the producer", async () => {
+    const SQL = await loadSqlJs();
+    const engine = Engine.bootstrap(createDatabase(SQL), { seed: 'market-mixed' });
+    engine.createSite({ id: 'market', name: 'Market', kind: 'market', x: 0, y: 0 });
+    engine.seedMarketListing('market', 'bread', 2, 10); // 10 merchant-import loaves, no physical stock
+    engine.createCompany({ id: 'bakery-co', name: 'Bakery Co', kind: 'bakery', siteId: 'market' });
+    engine.produceItem({ id: 'loaf-1', type: 'bread', containerId: 'bakery-co' });
+    sellSurplusToMarket(engine.db, engine.bus, 'bakery-co', 'market', 'bread', 1, 2, engine.tick);
+    engine.createEntity('buyer', 'Buyer');
+    engine.faucetCoin('buyer', 20, 'coin');
+    const coinBefore = engine.runConservationAudit().coin.actual;
+
+    const purchase = buyFromMarket(engine.db, engine.bus, 'buyer', 'market', 'bread', 4, engine.tick);
+
+    expect(purchase.itemIds[0]).toBe('loaf-1'); // the real loaf first...
+    expect(purchase.itemIds).toHaveLength(4); // ...then three imports
+    expect(engine.getBalance('bakery-co')).toBe(2); // paid for its one loaf only
+    expect(engine.getBalance('buyer')).toBe(12);
+    expect(engine.runConservationAudit().coin.actual).toBe(coinBefore - 6); // 3 imports sank out
+    expect(engine.getMarketListing('market', 'bread')?.quantity).toBe(7);
 
     engine.dispose();
   });

@@ -19,13 +19,17 @@ export interface Household {
   // cleared, matching every other soft-delete in this codebase.
   destituteSinceTick: number | null;
   departedAtTick: number | null;
+  // §11.4 "push (... hunger ...)": +1 per day this household couldn't feed
+  // everyone, -1 per day it could, floored at 0 (updated daily by
+  // cadence.ts; emigration reads it weekly).
+  hungerDays: number;
 }
 
-const HOUSEHOLD_COLUMNS = 'id, name, home_site_id, destitute_since_tick, departed_at_tick';
+const HOUSEHOLD_COLUMNS = 'id, name, home_site_id, destitute_since_tick, departed_at_tick, hunger_days';
 
 export function createHousehold(
   db: Database,
-  household: Omit<Household, 'destituteSinceTick' | 'departedAtTick'>,
+  household: Omit<Household, 'destituteSinceTick' | 'departedAtTick' | 'hungerDays'>,
 ): void {
   db.run('INSERT INTO households (id, name, home_site_id) VALUES (?, ?, ?)', [
     household.id,
@@ -41,6 +45,7 @@ function rowToHousehold(row: unknown[]): Household {
     homeSiteId: String(row[2]),
     destituteSinceTick: row[3] === null ? null : Number(row[3]),
     departedAtTick: row[4] === null ? null : Number(row[4]),
+    hungerDays: Number(row[5] ?? 0),
   };
 }
 
@@ -51,6 +56,13 @@ export function getHousehold(db: Database, id: string): Household | null {
 
 export function listHouseholds(db: Database): Household[] {
   return queryRows(db, `SELECT ${HOUSEHOLD_COLUMNS} FROM households ORDER BY id`).map(rowToHousehold);
+}
+
+export function recordHouseholdFedDay(db: Database, householdId: string, fullyFed: boolean): void {
+  db.run(
+    'UPDATE households SET hunger_days = CASE WHEN ? THEN MAX(0, hunger_days - 1) ELSE hunger_days + 1 END WHERE id = ?',
+    [fullyFed ? 1 : 0, householdId],
+  );
 }
 
 export function setHouseholdDestitution(db: Database, householdId: string, sinceTick: number | null): void {

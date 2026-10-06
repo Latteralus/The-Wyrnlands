@@ -1,16 +1,16 @@
 import { getCompany, recordLedgerEntry } from '../companies/companies';
+import { wearCompanyTool } from '../companies/tools';
+import { queryRow } from '../db/sqlite';
 import { createEntity, getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import {
-  consumeActiveItems,
   countActiveItemsOfType,
   destroyItem,
   findFirstActiveItem,
   listActiveItemsInContainer,
-  produceItem,
   transferItem,
 } from '../inventory/items';
-import { getBalance, faucetCoin, sinkCoin, transferCoin } from '../inventory/wallet';
+import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from '../inventory/wallet';
 import {
   applyForJob,
   countActiveEmploymentsForSlot,
@@ -19,18 +19,22 @@ import {
   listJobOpenings,
   quitJob,
 } from '../jobs/jobs';
-import { decrementStock, getListing, marketStockContainerId, seedListing } from '../market/market';
+import { SHIFT_XP, TOOL_WEAR_PER_SHIFT } from '../jobs/shifts';
+import { buyFromMarket, getListing, marketStockContainerId, seedListing } from '../market/market';
 import { clamp, ensureNeeds, getNeeds, type NeedKey } from '../needs/needs';
 import { getRecipeForSkill } from '../production/recipes';
-import { addXp, getLevel } from '../skills/skills';
+import { runProductionShift } from '../production/shift';
+import { addXp, getLevel, getSuccessChance } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
 import {
   addHouseholdMember,
   createHousehold,
   departHousehold,
+  getHouseholdIdForMember,
   listHouseholdMembers,
   listHouseholds,
   setHouseholdDestitution,
+  recordHouseholdFedDay,
   type Household,
 } from './households';
 import { FIRST_NAMES, SURNAMES, pick } from './npcGen';
@@ -62,9 +66,28 @@ import type { Database } from 'sql.js';
 const MARKET_SITE_ID = 'market';
 const SUBSISTENCE_HUNGER = 35; // §8.2 "common land gathering" floor — hardship, not starvation
 const WELL_FED_HUNGER = 100;
-const RESERVE_HEALTHY_THRESHOLD = 30; // coin — above this, a household isn't under strain
-const CHARITY_STIPEND = 5; // §8.2 "church charity/poorhouse" stabilizer
-const CHARITY_THRESHOLD = 5; // coin — below this, sell belongings/take charity
+export const RESERVE_HEALTHY_THRESHOLD = 150; // coin — above this, a household isn't under strain
+const CHARITY_STIPEND = 25; // §8.2 "church charity/poorhouse" stabilizer
+export const CHARITY_THRESHOLD = 25; // coin — below this, sell belongings/take charity
+
+// §8.2 "church charity/poorhouse": the parish is a real entity with a real
+// purse. Households above a comfortable reserve tithe part of the excess
+// weekly (applyParishTitheWeeklyCadence); charity is paid out of that fund.
+// Only when the fund is empty does charity fall back to outside relief (a
+// faucet, as all charity was before 2026-10-06). This turns the poor-relief
+// floor into redistribution — coin pooling in a prosperous owner's purse
+// flows back to the destitute — instead of a pure money printer.
+export const PARISH_ID = 'parish';
+const TITHE_THRESHOLD = 300; // coin a household keeps before tithing anything
+const TITHE_RATE = 0.1; // of the balance above the threshold, weekly
+// Below this the parish can't keep carrying its destitute (see the daily
+// destitution check) — about ten days of alms for a household.
+const PARISH_HARDSHIP_RESERVE = 10 * CHARITY_STIPEND;
+
+export function ensureParish(db: Database): void {
+  createEntity(db, PARISH_ID, 'The Parish');
+  ensureWallet(db, PARISH_ID);
+}
 
 function directSetNeed(db: Database, entityId: string, need: NeedKey, value: number): void {
   const needs = getNeeds(db, entityId);
@@ -80,16 +103,16 @@ function directAdjustNeed(db: Database, entityId: string, need: NeedKey, delta: 
 
 // Feeds every member of a household for one day: consumes existing bread
 // stock first, then buys the shortfall from the market if the household can
-// afford it. Returns true if every member was properly fed (used by the
-// caller to decide whether the adaptation ladder's "went hungry" rung fires
-// — §10's "cheaper food → smaller meals").
+// afford it. Returns how many members were properly fed (the caller decides
+// whether the adaptation ladder's "went hungry" rung fires — §10's "cheaper
+// food → smaller meals" — and tracks sustained hunger for migration).
 function feedHousehold(
   db: Database,
   bus: EventBus,
   household: Household,
   members: string[],
   tick: number,
-): boolean {
+): number {
   // Water is free and effectively unlimited at the well (§6/§8.2) — no
   // scarcity axis worth modeling for background NPCs; food is the real
   // budget line.
@@ -112,55 +135,24 @@ function feedHousehold(
       Math.min(members.length - fedCount, listing?.quantity ?? 0, affordableByCoin),
     );
 
-    // §Stage 5 closed economy: pays the real bakery once one exists and has
-    // sold into this listing (MarketListing.producerCompanyId); otherwise
-    // this is still the §8.1 merchant-faucet import it always was. This is
-    // the dominant bread-buying path in the game (up to NPC_HOUSEHOLD_COUNT
-    // purchases/day vs. the player's occasional one) — closing it, not just
-    // the player's own buy_bread action, is what actually closes the loop.
-    for (let i = 0; i < buyCount; i++) {
-      if (listing?.producerCompanyId) {
-        transferCoin(
-          db,
-          bus,
-          household.id,
-          listing.producerCompanyId,
-          price,
-          tick,
-          `${household.name} buys bread at the market.`,
-          'business',
-        );
-        recordLedgerEntry(
-          db,
-          listing.producerCompanyId,
-          tick,
-          'revenue',
-          price,
-          `Sold bread to ${household.name}.`,
-        );
-      } else {
-        sinkCoin(
-          db,
-          bus,
-          household.id,
-          price,
-          tick,
-          `${household.name} buys bread at the market.`,
-          'business',
-        );
-      }
-      decrementStock(db, MARKET_SITE_ID, 'bread', 1);
-      const itemId = `${household.id}-bread-${tick}-${i}`;
-      produceItem(db, bus, {
-        id: itemId,
-        type: 'bread',
-        containerId: household.id,
-        tick,
-        note: `Bought by ${household.name}.`,
+    // §Stage 5 closed economy: the real loaves the bakery consigned to the
+    // market are bought first (paying the bakery for exactly those), and
+    // only any shortfall is the §8.1 merchant-faucet import — see
+    // market.ts's buyFromMarket. This is the dominant bread-buying path in
+    // the game (up to one purchase per household per day vs. the player's
+    // occasional one), so closing it is what actually closes the loop.
+    if (buyCount > 0) {
+      const purchase = buyFromMarket(db, bus, household.id, MARKET_SITE_ID, 'bread', buyCount, tick, {
+        note: `${household.name} buys bread at the market.`,
         scope: 'business',
       });
-      destroyItem(db, bus, itemId, 'consumed', tick, { note: `${household.name} eats.`, scope: 'business' });
-      fedCount++;
+      for (const itemId of purchase.itemIds) {
+        destroyItem(db, bus, itemId, 'consumed', tick, {
+          note: `${household.name} eats.`,
+          scope: 'business',
+        });
+        fedCount++;
+      }
     }
   }
 
@@ -168,7 +160,32 @@ function feedHousehold(
     directSetNeed(db, entityId, 'hunger', i < fedCount ? WELL_FED_HUNGER : SUBSISTENCE_HUNGER);
   });
 
-  return fedCount >= members.length;
+  return fedCount;
+}
+
+// §10's budget order is "food → housing → fuel → ...": after eating, a
+// household exposed to winter cold buys and burns a day's firewood if it
+// can still afford one — the logging camp's real domestic market. Without
+// fuel, its members lose warmth through the day. Returns whether it burned
+// a fire.
+function heatHousehold(db: Database, bus: EventBus, household: Household, tick: number): boolean {
+  const own = findFirstActiveItem(db, household.id, 'firewood');
+  let firewoodId = own?.id ?? null;
+  if (!firewoodId) {
+    const listing = getListing(db, MARKET_SITE_ID, 'firewood');
+    if (!listing || listing.quantity <= 0 || getBalance(db, household.id) < listing.price) return false;
+    const purchase = buyFromMarket(db, bus, household.id, MARKET_SITE_ID, 'firewood', 1, tick, {
+      note: `${household.name} buys firewood for the hearth.`,
+      scope: 'business',
+    });
+    firewoodId = purchase.itemIds[0] ?? null;
+  }
+  if (!firewoodId) return false;
+  destroyItem(db, bus, firewoodId, 'consumed', tick, {
+    note: `${household.name} keeps a fire.`,
+    scope: 'business',
+  });
+  return true;
 }
 
 const DAILY_WARMTH_SHIFT = 10;
@@ -196,7 +213,13 @@ function findSellableBelonging(db: Database, householdId: string) {
 // member works" and "migrate" are named in §10 but not modeled yet (no NPC
 // job-seeking behavior exists this stage — see DECISIONS.md); flagged, not
 // silently dropped.
-function evaluateHouseholdBudget(db: Database, bus: EventBus, household: Household, tick: number): void {
+function evaluateHouseholdBudget(
+  db: Database,
+  bus: EventBus,
+  household: Household,
+  memberCount: number,
+  tick: number,
+): void {
   const balance = getBalance(db, household.id);
   if (balance >= RESERVE_HEALTHY_THRESHOLD) return;
 
@@ -215,7 +238,7 @@ function evaluateHouseholdBudget(db: Database, bus: EventBus, household: Househo
       } else {
         seedListing(db, MARKET_SITE_ID, sellable.type, price, 1);
       }
-      faucetCoin(db, bus, household.id, price, tick, note, 'settlement');
+      faucetCoin(db, bus, household.id, price, tick, note, 'settlement', 'sold_to_merchant');
       bus.emit({
         tick,
         scope: 'settlement',
@@ -227,16 +250,66 @@ function evaluateHouseholdBudget(db: Database, bus: EventBus, household: Househo
       return;
     }
 
+    // Alms sized to feed the household — a loaf a head at today's price —
+    // not a flat sum: a flat 25 coin bought a family of three two loaves, so
+    // someone went without every single day (measured: the largest single
+    // source of hunger in the 2026-10-06 balancing runs).
+    const breadPrice = getListing(db, MARKET_SITE_ID, 'bread')?.price ?? getGoodDefinition('bread').basePrice;
+    const alms = Math.max(CHARITY_STIPEND, memberCount * breadPrice);
+    // Alms come only from the parish's own fund (tithes, §8.2). When it's
+    // empty, there's nothing to give: the household falls back on the
+    // commons (feedHousehold's subsistence floor), and sustained hunger
+    // eventually pushes it to leave (§11.4). Before 2026-10-06 an empty
+    // parish fell back to "outside relief" — coin from nowhere — and the
+    // balancing runs showed that faucet quietly carrying two-thirds of the
+    // town: 100,000-290,000 coin over two years, spent straight back out
+    // on imported bread.
+    ensureParish(db);
+    if (getBalance(db, PARISH_ID) < alms) return;
     const charityNote = `${household.name} takes charity from the parish to get by.`;
-    faucetCoin(db, bus, household.id, CHARITY_STIPEND, tick, charityNote, 'settlement');
+    transferCoin(db, bus, PARISH_ID, household.id, alms, tick, charityNote, 'settlement');
     bus.emit({
       tick,
       scope: 'settlement',
       actorId: household.id,
       type: 'household.hardship.charity',
       message: charityNote,
-      data: { amount: CHARITY_STIPEND },
+      data: { amount: alms },
     });
+  }
+}
+
+// §10: "The household is the central economic unit: ... shared money." Any
+// coin sitting in a member's own wallet joins the household purse before
+// the day's budget runs. NPC wages are paid straight to the household (see
+// applyNpcLaborDailyCadence), so in a current world this is normally a
+// no-op — it exists because they weren't, before 2026-10-06: wages landed
+// in each worker's personal wallet, which nothing ever spent, while the
+// household wallet that buys food drained to nothing (measured: by day 90
+// of a 730-day run, 2,645 coin stranded across 14 workers' wallets vs. 184
+// left across all 24 household purses). This sweep also recovers exactly
+// that stranded coin in older saves. A transfer, not a faucet — conserved.
+function poolMemberCoin(
+  db: Database,
+  bus: EventBus,
+  household: Household,
+  members: string[],
+  tick: number,
+): void {
+  for (const memberId of members) {
+    const balance = getBalance(db, memberId);
+    if (balance > 0) {
+      transferCoin(
+        db,
+        bus,
+        memberId,
+        household.id,
+        balance,
+        tick,
+        `${getEntityName(db, memberId)} hands over their earnings.`,
+        'business',
+      );
+    }
   }
 }
 
@@ -254,9 +327,11 @@ export function applyHouseholdDailyCadence(
     const members = listHouseholdMembers(db, household.id);
     if (members.length === 0) continue;
 
-    const wellFed = feedHousehold(db, bus, household, members, tick);
-    for (const entityId of members) applyDailyRestAndWarmth(db, entityId, exposedToCold);
-    if (!wellFed) {
+    poolMemberCoin(db, bus, household, members, tick);
+    const fedCount = feedHousehold(db, bus, household, members, tick);
+    const warm = exposedToCold ? heatHousehold(db, bus, household, tick) : true;
+    for (const entityId of members) applyDailyRestAndWarmth(db, entityId, !warm);
+    if (fedCount < members.length) {
       bus.emit({
         tick,
         scope: 'settlement',
@@ -267,110 +342,145 @@ export function applyHouseholdDailyCadence(
       });
     }
 
-    evaluateHouseholdBudget(db, bus, household, tick);
+    evaluateHouseholdBudget(db, bus, household, members.length, tick);
 
-    // §11.4/§10's "migrate" rung: destitute = no employed member and still
-    // charity-reliant after this day's adaptation-ladder attempts above.
+    // §11.4/§10's "migrate" rung: destitute = no employed member and living
+    // hand to mouth (under twice the charity threshold) after this day's
+    // adaptation-ladder attempts. Until the 2026-10-06 balancing pass the
+    // bar was "below the charity threshold" itself, which a household on
+    // charity crossed back over every day it was topped up — so the clock
+    // reset daily and nobody ever emigrated, however long they lived on
+    // alms.
     // Set/cleared daily, same shape as companies' insolvent_since_tick
     // (companies/decisions.ts) — applyHouseholdMigrationWeeklyCadence reads
     // this weekly to decide whether the grace period has run out.
+    // ...and only once the parish can no longer carry it: a community
+    // supports its poor while it can (§8.2), and people leave when it can't.
+    // (Without this, every jobless household left within ~3 months even
+    // with a well-funded parish, and the town spiraled down to a handful of
+    // people.)
     const stillDestitute =
-      getBalance(db, household.id) < CHARITY_THRESHOLD &&
+      getBalance(db, household.id) < 2 * CHARITY_THRESHOLD &&
+      getBalance(db, PARISH_ID) < PARISH_HARDSHIP_RESERVE &&
       members.every((memberId) => getActiveEmployment(db, memberId) === null);
     if (stillDestitute) {
       if (household.destituteSinceTick === null) setHouseholdDestitution(db, household.id, tick);
     } else if (household.destituteSinceTick !== null) {
       setHouseholdDestitution(db, household.id, null);
     }
+
+    // §11.4 push: "hunger" — tallied on every day the household couldn't
+    // put a real meal in front of everyone (see households.ts's hungerDays).
+    recordHouseholdFedDay(db, household.id, fedCount >= members.length);
   }
 }
 
-const WEEKLY_SHIFTS = 5; // 5 working days/week — same wage unit as the player's per-shift wage, batched
-const WEEKLY_XP = 200;
+// §8.2: the weekly tithe that funds the parish's charity (see PARISH_ID).
+export function applyParishTitheWeeklyCadence(db: Database, bus: EventBus, tick: number): void {
+  ensureParish(db);
+  for (const household of listHouseholds(db)) {
+    if (household.departedAtTick !== null) continue;
+    const tithe = Math.floor((getBalance(db, household.id) - TITHE_THRESHOLD) * TITHE_RATE);
+    if (tithe <= 0) continue;
+    transferCoin(
+      db,
+      bus,
+      household.id,
+      PARISH_ID,
+      tithe,
+      tick,
+      `${household.name} tithes ${tithe} coin to the parish.`,
+      'business',
+    );
+  }
+}
 
-// §4.2 cadence: "weekly (hiring/wages ...)." Pays every NPC's active
-// employment as one lump sum (§9.8: "presence = labor-ticks = production" —
-// a labor-time wage, same principle as the player's per-shift wage, just
-// batched to a week instead of queued per shift) and grants the matching
-// skill XP/output via production/recipes.ts's shared recipe table (§Stage 5
-// unified this with the player's own jobs/shifts.ts, which used to hardcode
-// a separate, slightly different copy of the same "farming -> grain" fact).
-// The player is excluded — their wages come from real work_shift actions
-// triggered through the interface (§Stage 3), not this cadence; household
-// membership is what distinguishes "NPC" from "player" here (see
-// households.ts's isHouseholdMember).
-export function applyNpcLaborWeeklyCadence(db: Database, bus: EventBus, tick: number): void {
+// Six working days and a day of rest (day 7 of each week, when the weekly
+// cadence runs). Five-day weeks left the bakery's shelf empty every
+// weekend, so a sixth of every week's bread was a merchant import.
+export const WORKDAYS_PER_WEEK = 6;
+export function isWorkday(tick: number): boolean {
+  return Math.floor(tick / MINUTES_PER_DAY) % 7 !== 0;
+}
+
+// §9.8 "workers commit timed shifts; presence = labor-ticks = production."
+// On each workday, every NPC employment works one shift under the SAME
+// rules the player's own work_shift action applies (jobs/shifts.ts —
+// pillar 2, "NPCs live by the same rules as the player"):
+//   - no company tool on hand → no shift at all: no wage, XP or output;
+//   - the shift's wage is paid (capped at what the employer can afford)
+//     into the worker's household purse (§10 "shared money");
+//   - a skill roll decides the shift's yield (§13.2), and production runs
+//     through production/shift.ts exactly as the player's does;
+//   - the tool wears (TOOL_WEAR_PER_SHIFT) and the worker gains SHIFT_XP.
+// Household membership is the NPC signal, exactly as
+// Engine.applyNeedsCadence uses it; the player works real shifts instead.
+//
+// History: this was a weekly lump (five shifts' wages/output at once) until
+// the 2026-10-06 balancing pass. Daily shifts keep goods flowing through
+// the markets every day instead of one weekly flood-then-drought, which
+// the stock-based pricing (market/pricing.ts) needs to mean anything. The
+// same day's pass also fixed wages landing in personal wallets nothing
+// spends, the player being paid twice, and NPCs ignoring tools/skill.
+export function applyNpcLaborDailyCadence(
+  db: Database,
+  bus: EventBus,
+  tick: number,
+  rng: () => number,
+): void {
+  if (!isWorkday(tick)) return;
   for (const jobSlot of listJobOpenings(db)) {
     for (const employment of listActiveEmploymentsForSlot(db, jobSlot.id)) {
+      const householdId = getHouseholdIdForMember(db, employment.entityId);
+      if (!householdId) continue; // the player (or any foreground actor) works real shifts instead
       const company = getCompany(db, employment.companyId);
       if (!company) continue;
 
-      const weeklyWage = employment.wage * WEEKLY_SHIFTS;
-      const affordable = Math.max(0, Math.min(weeklyWage, getBalance(db, employment.companyId)));
-      if (affordable > 0) {
+      if (jobSlot.toolGoodType && countActiveItemsOfType(db, company.id, jobSlot.toolGoodType) === 0) {
+        bus.emit({
+          tick,
+          scope: 'business',
+          actorId: company.id,
+          type: 'company.idle_no_tool',
+          message: `${getEntityName(db, employment.entityId)} can't work at ${company.name} today — there's no ${jobSlot.toolGoodType}.`,
+          data: { entityId: employment.entityId, toolGoodType: jobSlot.toolGoodType },
+        });
+        continue;
+      }
+
+      const wage = Math.max(0, Math.min(employment.wage, getBalance(db, company.id)));
+      if (wage > 0) {
         transferCoin(
           db,
           bus,
-          employment.companyId,
-          employment.entityId,
-          affordable,
+          company.id,
+          householdId,
+          wage,
           tick,
-          `${company.name} pays ${affordable} coin in wages.`,
+          `${company.name} pays ${getEntityName(db, employment.entityId)} ${wage} coin for a shift.`,
           'business',
         );
-        recordLedgerEntry(db, employment.companyId, tick, 'wage', affordable, 'Weekly wages.');
+        recordLedgerEntry(db, company.id, tick, 'wage', wage, 'Shift wage.');
       }
 
-      addXp(db, employment.entityId, jobSlot.skill, WEEKLY_XP);
-
+      const succeeded = rng() < getSuccessChance(db, employment.entityId, jobSlot.skill);
       const recipe = getRecipeForSkill(jobSlot.skill);
-      if (!recipe) continue;
-      const level = getLevel(db, employment.entityId, jobSlot.skill);
-      const qualityTier = 1 + Math.floor(level / 2);
-      // A week's worth of a single shift-equivalent yield, same shape as
-      // the old WEEKLY_YIELD_PER_SHIFT * WEEKLY_SHIFTS this replaces —
-      // farming/woodcutting's numbers are unchanged (recipe.yieldPerShiftSuccess
-      // === the old constant), so existing Stage 3/4 behavior is preserved
-      // exactly; only milling/baking are new.
-      let quantity = WEEKLY_SHIFTS * recipe.yieldPerShiftSuccess;
-
-      // §Stage 5's real transformation chains (milling, baking) consume an
-      // input good, capped by what the company actually has on hand — no
-      // grain, no flour, however skilled the miller. Farming/woodcutting's
-      // inputGood is null (extraction — §5.2's infinite resource nodes), so
-      // this never caps their output, matching their pre-Stage-5 behavior.
-      if (recipe.inputGood) {
-        const available = countActiveItemsOfType(db, employment.companyId, recipe.inputGood);
-        const maxByInput = Math.floor(available / recipe.inputUnitsPerOutputUnit);
-        quantity = Math.min(quantity, maxByInput);
-        if (quantity <= 0) continue;
-        consumeActiveItems(
-          db,
-          bus,
-          employment.companyId,
-          recipe.inputGood,
-          quantity * recipe.inputUnitsPerOutputUnit,
+      if (recipe) {
+        runProductionShift(db, bus, {
+          companyId: company.id,
+          companyName: company.name,
+          workerId: employment.entityId,
+          recipe,
+          succeeded,
+          qualityTier: 1 + Math.floor(getLevel(db, employment.entityId, jobSlot.skill) / 2),
           tick,
-          {
-            actorId: employment.entityId,
-            note: `${recipe.inputGood} used at ${company.name}.`,
-            scope: 'business',
-          },
-        );
-      }
-
-      for (let i = 0; i < quantity; i++) {
-        produceItem(db, bus, {
-          id: `${employment.companyId}-${recipe.outputGood}-${tick}-${employment.entityId}-${i}`,
-          type: recipe.outputGood,
-          qualityTier,
-          containerId: employment.companyId,
-          tick,
-          actorId: employment.entityId,
-          note: `${recipe.outputGood} produced at ${company.name}.`,
           scope: 'business',
         });
       }
+      if (jobSlot.toolGoodType) {
+        wearCompanyTool(db, bus, company.id, jobSlot.toolGoodType, TOOL_WEAR_PER_SHIFT, tick);
+      }
+      addXp(db, employment.entityId, jobSlot.skill, SHIFT_XP);
     }
   }
 }
@@ -446,7 +556,25 @@ export function applyNpcJobSeekingWeeklyCadence(
 // charity, another member works — there was no open slot for one) and
 // leaves for good. Deterministic day-count threshold, same reproducibility
 // reasoning as companies/decisions.ts's closure grace period.
-const EMIGRATION_GRACE_DAYS = 21;
+const EMIGRATION_GRACE_DAYS = 60;
+// §11.4 lists hunger first among push factors. A household that hasn't
+// been able to feed everyone for this long leaves even with coin in its
+// purse — before
+// 2026-10-06 only destitution (no money AND no job) counted, so a starving
+// town with a little money never emptied at all.
+const HUNGER_EMIGRATION_DAYS = 45;
+
+function ownsOpenCompany(db: Database, members: string[]): boolean {
+  if (members.length === 0) return false;
+  const placeholders = members.map(() => '?').join(', ');
+  return (
+    queryRow(
+      db,
+      `SELECT 1 FROM companies WHERE closed_at_tick IS NULL AND owner_id IN (${placeholders}) LIMIT 1`,
+      members,
+    ) !== undefined
+  );
+}
 
 function tryEmigrateHousehold(
   db: Database,
@@ -455,9 +583,15 @@ function tryEmigrateHousehold(
   members: string[],
   tick: number,
 ): void {
-  if (household.destituteSinceTick === null) return;
-  const daysDestitute = (tick - household.destituteSinceTick) / MINUTES_PER_DAY;
-  if (daysDestitute < EMIGRATION_GRACE_DAYS) return;
+  const daysDestitute =
+    household.destituteSinceTick === null ? 0 : (tick - household.destituteSinceTick) / MINUTES_PER_DAY;
+  const daysHungry = household.hungerDays;
+  const pushedByPoverty = daysDestitute >= EMIGRATION_GRACE_DAYS;
+  const pushedByHunger = daysHungry >= HUNGER_EMIGRATION_DAYS;
+  if (!pushedByPoverty && !pushedByHunger) return;
+  // An owner doesn't walk away from a business that's still open — it
+  // fails first (companies/decisions.ts), and then they're free to go.
+  if (ownsOpenCompany(db, members)) return;
 
   // Defensive, not load-bearing: destitution already requires zero employed
   // members, but a departing household shouldn't leave a dangling job behind
@@ -492,6 +626,7 @@ function tryEmigrateHousehold(
       tick,
       `${household.name} takes its savings and leaves.`,
       'settlement',
+      'emigration',
     );
   }
 
@@ -501,8 +636,15 @@ function tryEmigrateHousehold(
     scope: 'settlement',
     actorId: household.id,
     type: 'household.migration.emigrated',
-    message: `${household.name} packs up and leaves, unable to make ends meet after a hard stretch.`,
-    data: { memberCount: members.length, daysDestitute: Math.floor(daysDestitute) },
+    message: pushedByHunger
+      ? `${household.name} packs up and leaves after weeks of going hungry.`
+      : `${household.name} packs up and leaves, unable to make ends meet after a hard stretch.`,
+    data: {
+      memberCount: members.length,
+      daysDestitute: Math.floor(daysDestitute),
+      daysHungry: Math.floor(daysHungry),
+      reason: pushedByHunger ? 'hunger' : 'poverty',
+    },
   });
 }
 
@@ -514,10 +656,11 @@ function tryEmigrateHousehold(
 // pass (applyNpcJobSeekingWeeklyCadence, called just before this in
 // engine.ts) do the actual hiring, rather than duplicating its logic here.
 const IMMIGRATION_CHANCE_PER_WEEK = 0.25;
+const IMMIGRATION_MAX_BREAD_PRICE_FACTOR = 2;
 const IMMIGRANT_MIN_MEMBERS = 1;
 const IMMIGRANT_MAX_MEMBERS = 2;
-const IMMIGRANT_STARTING_COIN_MIN = 10;
-const IMMIGRANT_STARTING_COIN_MAX = 25;
+const IMMIGRANT_STARTING_COIN_MIN = 50;
+const IMMIGRANT_STARTING_COIN_MAX = 125;
 // No dedicated housing sites exist yet (§12 Housing is a later module) — same
 // "tavern stands in as town center" stand-in seed/demoWorld.ts already uses
 // for every other household's home site.
@@ -529,6 +672,11 @@ function tryImmigrateHousehold(db: Database, bus: EventBus, tick: number, rng: (
     0,
   );
   if (totalVacancies === 0) return;
+  // Pull needs food as well as work (§11.4 "pull (jobs, wages, housing,
+  // food...)"): nobody moves to a town in famine, however many jobs it posts.
+  const bread = getListing(db, MARKET_SITE_ID, 'bread');
+  const breadBase = getGoodDefinition('bread').basePrice;
+  if (!bread || bread.quantity <= 0 || bread.price > breadBase * IMMIGRATION_MAX_BREAD_PRICE_FACTOR) return;
   if (rng() >= IMMIGRATION_CHANCE_PER_WEEK) return;
 
   const surname = pick(rng, SURNAMES);
@@ -549,6 +697,7 @@ function tryImmigrateHousehold(db: Database, bus: EventBus, tick: number, rng: (
     tick,
     `${householdName} arrives with modest travel savings.`,
     'settlement',
+    'immigration',
   );
 
   const memberCount =

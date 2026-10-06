@@ -1,4 +1,4 @@
-export type ItemStatus = 'active' | 'consumed' | 'spoiled' | 'worn_out';
+export type ItemStatus = 'active' | 'consumed' | 'spoiled' | 'worn_out' | 'exported';
 export type DestructionReason = Exclude<ItemStatus, 'active'>;
 
 export interface Item {

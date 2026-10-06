@@ -1,70 +1,83 @@
 import { BAKING_SKILL, FARMING_SKILL, MILLING_SKILL, WOODCUTTING_SKILL } from '../skills/skills';
 
 // §9.1 "Structure: inputs + labor + tools + time + building capacity ->
-// outputs" and §7.2's goods roadmap ("imported via merchant faucet at
-// first, produced locally as chains come online"). This is the single
-// source of truth for both production paths this codebase has: the
-// player's own timed work_shift action (jobs/shifts.ts) and NPCs' batched
-// weekly cadence (population/cadence.ts) — before Stage 5 these read two
-// separately hardcoded copies of the same "farming -> grain" fact (and
-// shifts.ts silently mis-produced grain for the logging job slot too, a
-// real latent bug this unification fixes, not something Stage 5 caused).
+// outputs." The single source of truth for both production paths: the
+// player's timed work_shift action (jobs/shifts.ts) and NPCs' cadence
+// shifts (population/cadence.ts), both through production/shift.ts's
+// runProductionShift, so their math can't drift apart.
 //
-// Goods-as-data (§16) properly means a DB table (or JSON packs) modding can
-// override; this is still the same honest code-catalog stand-in as the
-// goods catalog itself (goods/catalog.ts) — a real simplification, flagged
-// like every other one, not a silent shortcut.
+// Goods-as-data (§16) properly means DB records/JSON packs; this is the
+// same code-catalog stand-in as goods/catalog.ts.
 export interface Recipe {
   skill: string;
-  // null = extraction from an effectively infinite resource node (§5.2:
-  // "resource nodes are infinite... scarcity comes from labor, logistics,
-  // and demand, not depletion") — no input good is consumed.
+  // null = extraction from an effectively infinite resource node (§5.2 —
+  // scarcity comes from labor, not depletion): no input consumed.
   inputGood: string | null;
-  inputUnitsPerOutputUnit: number; // ignored when inputGood is null
   outputGood: string;
-  // Per single shift/labor-unit (§9.8's shift model) — the same number both
-  // jobs/shifts.ts (one shift) and population/cadence.ts (batched
-  // WEEKLY_SHIFTS-many shifts) scale from, so the player's and NPCs'
-  // production math can never drift apart the way it did before Stage 5.
-  yieldPerShiftSuccess: number;
-  yieldPerShiftFailure: number; // §13.2: failure wastes time/materials, not the whole shift
+  // One batch turns `inputUnits` of the input into `outputUnits` of output
+  // (e.g. 1 flour -> 2 loaves). Ignored for extraction.
+  inputUnits: number;
+  outputUnits: number;
+  // What one 6-hour shift's labor can turn out, in OUTPUT units, on a
+  // successful vs failed skill roll (§13.2: failure wastes time and
+  // materials, not the whole shift). For a transformation this is a
+  // ceiling — input on hand caps it.
+  outputPerShiftSuccess: number;
+  outputPerShiftFailure: number;
 }
 
+// Yields set in the 2026-10-06 balancing pass (DECISIONS.md), by
+// measurement across several 2-year runs:
+//  - The original 4-5 units a shift at every step meant feeding ~45 people
+//    took ~40 workers; the seeded companies made a sixth of the town's
+//    bread and every run starved within a year.
+//  - A first rebalance (9 grain / 40 flour / 60 loaves) overshot: the whole
+//    chain needed ~7 workers, ~75% of people could never find work, and
+//    the town emptied as jobless households left — fewer people, less
+//    demand, fewer jobs, a depopulation spiral.
+//  - In a closed economy where food is the main thing people buy, a job
+//    feeds its worker and about one dependent, so food production has to
+//    need roughly half the population for the town to sustain itself — as
+//    in a real medieval village, where most people worked the land. Hence
+//    a farmer feeds ~4 people (≈2.4 grain a shift, half a sack of grain per
+//    loaf), while milling and baking stay skilled, high-throughput trades.
 const RECIPES: Record<string, Recipe> = {
   [FARMING_SKILL]: {
     skill: FARMING_SKILL,
     inputGood: null,
-    inputUnitsPerOutputUnit: 0,
     outputGood: 'grain',
-    yieldPerShiftSuccess: 4,
-    yieldPerShiftFailure: 1,
+    inputUnits: 0,
+    outputUnits: 1,
+    outputPerShiftSuccess: 3,
+    outputPerShiftFailure: 1,
   },
   [WOODCUTTING_SKILL]: {
     skill: WOODCUTTING_SKILL,
     inputGood: null,
-    inputUnitsPerOutputUnit: 0,
     outputGood: 'firewood',
-    yieldPerShiftSuccess: 4,
-    yieldPerShiftFailure: 1,
+    inputUnits: 0,
+    outputUnits: 1,
+    outputPerShiftSuccess: 4,
+    outputPerShiftFailure: 1,
   },
-  // §Stage 5's first real transformation chain: grain -> flour -> bread.
-  // 1:1 input ratios and placeholder yields (flagged like every other
-  // unbalanced constant so far — revisit with the balance harness, §17).
   [MILLING_SKILL]: {
     skill: MILLING_SKILL,
     inputGood: 'grain',
-    inputUnitsPerOutputUnit: 1,
     outputGood: 'flour',
-    yieldPerShiftSuccess: 5,
-    yieldPerShiftFailure: 1,
+    inputUnits: 1,
+    outputUnits: 1,
+    outputPerShiftSuccess: 25,
+    outputPerShiftFailure: 10,
   },
+  // A sack of flour bakes into two loaves.
   [BAKING_SKILL]: {
     skill: BAKING_SKILL,
     inputGood: 'flour',
-    inputUnitsPerOutputUnit: 1,
     outputGood: 'bread',
-    yieldPerShiftSuccess: 5,
-    yieldPerShiftFailure: 1,
+    inputUnits: 1,
+    outputUnits: 2,
+    outputPerShiftSuccess: 48,
+    outputPerShiftFailure: 16,
   },
 };
 
@@ -72,25 +85,24 @@ export function getRecipeForSkill(skill: string): Recipe | null {
   return RECIPES[skill] ?? null;
 }
 
-// §9.6 "decide daily... prices": a company should only sell into the market
-// what someone actually wants — bread (the only good with real consumer
-// demand: households' feedHousehold, the player's buy_bread) or another
-// recipe's input (grain -> mill, flour -> bakery). Firewood is a real,
-// deliberate counter-example: no buy_firewood action and no recipe consumes
-// it, so the logging camp's own surplus has *no* real buyer yet — selling
-// it anyway would just pile literally-unwanted items into the market stall
-// forever, real DB bloat for no economic reason (found the hard way: this
-// was silently inflating checkpointed-run wall-clock time well past
-// stage4.test.ts's regression guard before this gate was added). A future
-// use for firewood (a hearth/fuel recipe, a buy action) removes this good
-// from the gate automatically, since it'd then show up as a recipe input.
-const KNOWN_DEMAND_GOODS = new Set<string>([
-  'bread',
-  ...Object.values(RECIPES)
-    .map((r) => r.inputGood)
-    .filter((g): g is string => g !== null),
-]);
+// How much one shift actually produces and consumes, given the labor's
+// output ceiling and the input on hand. Whole batches only.
+export function planShift(
+  recipe: Recipe,
+  laborOutput: number,
+  inputAvailable: number,
+): { consume: number; produce: number } {
+  if (!recipe.inputGood) return { consume: 0, produce: laborOutput };
+  const batches = Math.min(
+    Math.floor(laborOutput / recipe.outputUnits),
+    Math.floor(inputAvailable / recipe.inputUnits),
+  );
+  return { consume: batches * recipe.inputUnits, produce: batches * recipe.outputUnits };
+}
 
-export function hasKnownDemand(good: string): boolean {
-  return KNOWN_DEMAND_GOODS.has(good);
+// Expected input a worker processes per shift at full labor (for
+// restocking forecasts) — 0 for extraction.
+export function inputPerShift(recipe: Recipe): number {
+  if (!recipe.inputGood) return 0;
+  return (recipe.outputPerShiftSuccess / recipe.outputUnits) * recipe.inputUnits;
 }

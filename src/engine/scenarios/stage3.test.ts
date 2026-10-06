@@ -102,6 +102,16 @@ describe('Stage 3 — First Job scenarios', () => {
     const db = createDatabase(SQL);
     const engine = Engine.bootstrap(db, { seed: 'stage3-season' });
     seedDemoWorld(engine);
+    // This seed rolls a winter start (§5.4). Pinned to spring on purpose:
+    // an uncloaked new farmhand genuinely cannot sustain winter field work
+    // (a shift burns 75 warmth; the only warmth source, a 3-coin bunk, gives
+    // 30; the wage is 3 and a cloak costs ~30 against 20 starting coin) — a
+    // real balance finding recorded in PERFORMANCE_AUDIT.md's Stage 5 audit,
+    // not something this §14.4 job-loop test should silently paper over.
+    // It previously "passed" in winter only because an employed player also
+    // received NPC weekly wages/XP (a double-payment bug, fixed 2026-10-06),
+    // while collapsing from cold ~90% through nearly every shift.
+    engine.setStartSeasonIndex(0);
 
     engine.applyForJob(PLAYER_ID, FARM_JOB_SLOT_ID, { haggle: true });
 
@@ -135,6 +145,10 @@ describe('Stage 3 — First Job scenarios', () => {
       // hardcoding one.
       const breadPrice = engine.getMarketListing('market', 'bread')?.price ?? 2;
       const shoesPrice = engine.getMarketListing('market', 'shoes')?.price ?? 15;
+      const cloakPrice = engine.getMarketListing('market', 'cloak')?.price ?? 25;
+      const wornBody = engine.getWornGear(PLAYER_ID).find((g) => g.slot === 'body');
+      const carriedCloak = findFirstActiveItem(engine.db, PLAYER_ID, 'cloak');
+      if (!wornBody && carriedCloak) engine.equipItem(PLAYER_ID, carriedCloak.id);
 
       // A work shift is 360 ticks — far longer than any Stage 2 action
       // (5-90 ticks) — so starting one needs a much bigger safety margin
@@ -159,7 +173,18 @@ describe('Stage 3 — First Job scenarios', () => {
         queuedType = balance >= REST_BUNK_PRICE ? 'rest_bunk' : 'rest_rough';
       } else if (!wornFeet && balance >= shoesPrice) {
         queuedType = 'buy_shoes';
-      } else if (needs.thirst >= 75 && needs.hunger >= 75 && needs.energy >= 75) {
+      } else if (!wornBody && balance >= cloakPrice) {
+        // §6: "winter without a wool cloak is dangerous" — a cloak stops
+        // warmth draining at all (engine.ts's WARMTH_PROTECTION_THRESHOLD).
+        queuedType = 'buy_cloak';
+      } else if (needs.thirst >= 75 && needs.hunger >= 75 && needs.energy >= 75 && needs.warmth >= 80) {
+        // Warmth too: an uncloaked worker in winter loses 75 warmth over a
+        // 360-tick shift, so starting below 80 means collapsing before the
+        // shift ends (needs.ts — collapse interrupts the shift outright).
+        // This script used to ignore warmth here and collapsed ~90% through
+        // most winter shifts; the test still passed only because an
+        // employed player was ALSO paid NPC weekly wages/XP (fixed
+        // 2026-10-06 — see population/cadence.ts's weekly labor cadence).
         queuedType = WORK_SHIFT_TYPE;
       } else {
         // In the 60-75 buffer zone on at least one need — not yet safe to
@@ -189,8 +214,12 @@ describe('Stage 3 — First Job scenarios', () => {
 
     expect(eatenItemIds.length).toBeGreaterThan(0);
     for (const itemId of eatenItemIds) {
-      const chain = engine.getProvenanceChain(itemId);
-      expect(chain.map((e) => e.eventType)).toEqual(['produced', 'consumed']);
+      // produced → consumed for a merchant import; a real local loaf also
+      // carries its bakery → market → player transfers.
+      const types = engine.getProvenanceChain(itemId).map((e) => e.eventType);
+      expect(types[0]).toBe('produced');
+      expect(types[types.length - 1]).toBe('consumed');
+      expect(types.slice(1, -1).every((t) => t === 'transferred')).toBe(true);
     }
 
     expect(engine.queryLog('world', 10_000).some((e) => e.type === 'audit.failed')).toBe(false);

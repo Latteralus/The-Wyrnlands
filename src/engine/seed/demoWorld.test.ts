@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { createDatabase } from '../db/sqlite';
 import { loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
+import { getGoodDefinition } from '../goods/catalog';
 import { countActiveEmploymentsForSlot } from '../jobs/jobs';
 import {
   BAKERY_JOB_SLOT_ID,
@@ -70,8 +71,8 @@ describe('rolled starting conditions (§5.4)', () => {
 
     const bread = engine.getMarketListing('market', 'bread')!;
     const shoes = engine.getMarketListing('market', 'shoes')!;
-    expect(bread.price).toBe(Math.max(1, Math.round(2 * roll.priceLevel)));
-    expect(shoes.price).toBe(Math.max(1, Math.round(15 * roll.priceLevel)));
+    expect(bread.price).toBe(Math.max(1, Math.round(getGoodDefinition('bread').basePrice * roll.priceLevel)));
+    expect(shoes.price).toBe(Math.max(1, Math.round(getGoodDefinition('shoes').basePrice * roll.priceLevel)));
 
     engine.dispose();
   });

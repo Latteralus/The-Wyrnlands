@@ -1,25 +1,24 @@
+import { recordLedgerEntry } from '../companies/companies';
 import { wearCompanyTool } from '../companies/tools';
-import {
-  consumeActiveItems,
-  countActiveItemsOfType,
-  findFirstActiveItem,
-  produceItem,
-} from '../inventory/items';
+import { findFirstActiveItem } from '../inventory/items';
 import { getBalance, transferCoin } from '../inventory/wallet';
 import { getRecipeForSkill } from '../production/recipes';
+import { runProductionShift } from '../production/shift';
 import { addXp, getLevel, getSuccessChance } from '../skills/skills';
 import { getActiveEmploymentForSlot, getJobSlot } from './jobs';
 import type { ActionDefinition } from '../actions/types';
 
-const TOOL_WEAR_PER_SHIFT = 3;
-const SHIFT_XP = 40;
+// Shared with NPCs' batched weekly shifts (population/cadence.ts) — same rules.
+export const TOOL_WEAR_PER_SHIFT = 3;
+// Shared with NPC shifts (population/cadence.ts) — same rules.
+export const SHIFT_XP = 40;
 
 // A timed "work a shift" action bound to one job slot (§9.8: "workers
 // commit timed shifts; presence = labor-ticks = production"). jobSlotId is
 // baked in like createBuyActionDefinition bakes in (siteId, goodType); the
 // employment/job-slot/tool state itself is looked up live at resolve time,
 // same pattern. Production math comes from production/recipes.ts — the
-// same table NPCs' weekly batch (population/cadence.ts) reads — so the
+// same table NPCs' daily shifts (population/cadence.ts) read — so the
 // player's own shift can never drift out of sync with it the way it used
 // to (this used to hardcode grain-specific yields directly here, which
 // also meant a player working the *logging* job slot silently produced
@@ -100,41 +99,22 @@ export function createWorkShiftActionDefinition(
           ctx.tick,
           `${jobSlot.companyName} pays you ${affordableWage} coin for your shift.`,
         );
+        recordLedgerEntry(ctx.db, jobSlot.companyId, ctx.tick, 'wage', affordableWage, 'Shift wage.');
       }
 
       const recipe = getRecipeForSkill(jobSlot.skill);
       if (!recipe) return; // a job slot for a skill with no production recipe (none exist today, but not assumed impossible)
 
-      const qualityTier = 1 + Math.floor(getLevel(ctx.db, ctx.actorId, jobSlot.skill) / 2);
-      let quantity = outcome.success ? recipe.yieldPerShiftSuccess : recipe.yieldPerShiftFailure;
-
-      if (recipe.inputGood) {
-        const available = countActiveItemsOfType(ctx.db, jobSlot.companyId, recipe.inputGood);
-        const maxByInput = Math.floor(available / recipe.inputUnitsPerOutputUnit);
-        quantity = Math.min(quantity, maxByInput);
-        if (quantity <= 0) return; // no input on hand — the shift's labor produced nothing this time
-        consumeActiveItems(
-          ctx.db,
-          ctx.bus,
-          jobSlot.companyId,
-          recipe.inputGood,
-          quantity * recipe.inputUnitsPerOutputUnit,
-          ctx.tick,
-          { actorId: ctx.actorId, note: `${recipe.inputGood} used at ${jobSlot.companyName}.` },
-        );
-      }
-
-      for (let i = 0; i < quantity; i++) {
-        produceItem(ctx.db, ctx.bus, {
-          id: `${jobSlot.companyId}-${recipe.outputGood}-${ctx.tick}-${i}`,
-          type: recipe.outputGood,
-          qualityTier,
-          containerId: jobSlot.companyId,
-          tick: ctx.tick,
-          actorId: ctx.actorId,
-          note: `${recipe.outputGood} produced at ${jobSlot.companyName}.`,
-        });
-      }
+      runProductionShift(ctx.db, ctx.bus, {
+        companyId: jobSlot.companyId,
+        companyName: jobSlot.companyName,
+        workerId: ctx.actorId,
+        recipe,
+        succeeded: outcome.success,
+        qualityTier: 1 + Math.floor(getLevel(ctx.db, ctx.actorId, jobSlot.skill) / 2),
+        tick: ctx.tick,
+        scope: 'personal',
+      });
     },
   };
 }

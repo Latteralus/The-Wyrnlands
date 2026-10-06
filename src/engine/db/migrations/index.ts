@@ -14,6 +14,9 @@ import { migration_0013_items_container_type_index } from './0013_items_containe
 import { migration_0014_event_log_actor_index } from './0014_event_log_actor_index';
 import { migration_0015_rolled_starting_conditions } from './0015_rolled_starting_conditions';
 import { migration_0016_household_migration } from './0016_household_migration';
+import { migration_0017_open_actions_index } from './0017_open_actions_index';
+import { migration_0018_market_consignments } from './0018_market_consignments';
+import { migration_0019_economy_balance } from './0019_economy_balance';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -37,4 +40,7 @@ export const migrations: Migration[] = [
   migration_0014_event_log_actor_index,
   migration_0015_rolled_starting_conditions,
   migration_0016_household_migration,
+  migration_0017_open_actions_index,
+  migration_0018_market_consignments,
+  migration_0019_economy_balance,
 ];

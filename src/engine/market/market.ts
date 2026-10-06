@@ -1,11 +1,12 @@
 import { recordLedgerEntry } from '../companies/companies';
 import { queryRow, queryRows } from '../db/sqlite';
 import { getGoodDefinition } from '../goods/catalog';
+import { getConservationCounters } from '../inventory/counters';
 import { findFirstActiveItem, produceItem, transferItem } from '../inventory/items';
 import { faucetCoin, getBalance, sinkCoin, transferCoin } from '../inventory/wallet';
 import { withOptional } from '../optional';
 import type { ActionDefinition } from '../actions/types';
-import type { EventBus } from '../eventBus';
+import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
 
 export interface MarketListing {
@@ -14,11 +15,12 @@ export interface MarketListing {
   goodType: string;
   price: number;
   quantity: number;
-  // §Stage 5 / §8.1 rule 4 "closed economy": which company's real production
-  // this stock represents, or null for an unbacked merchant-faucet import
-  // (§7.2: "imported... at first, produced locally as chains come online").
-  // One producer per (site, good) — a deliberate v1 simplification, not
-  // per-seller competition; see sellSurplusToMarket's header comment.
+  // The local company that most recently consigned real production into
+  // this listing, or null if none ever has (a pure merchant-faucet import,
+  // §7.2). Informational only — who actually gets paid for a given unit is
+  // decided per unit by market_consignments (see buyFromMarket), not by
+  // this field; paying it for every unit sold used to hand a producer the
+  // revenue for merchant-import stock it never made.
   producerCompanyId: string | null;
   // The "healthy" stock level this listing's price is scarce/plentiful
   // relative to (§8.1 rule 4's scarcity factor) — set once at seed time.
@@ -93,10 +95,8 @@ export function decrementStock(db: Database, siteId: string, goodType: string, q
 
 const BUY_DURATION_TICKS = 5; // a quick errand (§4.3), not a shift
 
-// A timed "buy" action bound to one (site, good) listing — §8.1's imports
-// modeled literally: coin sinks out of the closed economy, the good is
-// produced into existence (a goods faucet) into the buyer's own container.
-// No merchant entity exists yet to hold the coin instead (Stage 3+ jobs).
+// A timed "buy" action bound to one (site, good) listing — see
+// buyFromMarket below for where the unit comes from and who is paid.
 export function createBuyActionDefinition(siteId: string, goodType: string): ActionDefinition {
   return {
     type: `buy_${goodType}`,
@@ -117,50 +117,10 @@ export function createBuyActionDefinition(siteId: string, goodType: string): Act
     },
     applyOutcome: (ctx, outcome) => {
       if (!outcome.success) return;
-      const price = Number(outcome.data?.price);
-      decrementStock(ctx.db, siteId, goodType, 1);
-
-      // §Stage 5 closed economy: a listing backed by a real producer (see
-      // MarketListing.producerCompanyId) pays that company instead of
-      // sinking the coin out of the economy — everything still unbacked
-      // (shoes, cloaks) stays exactly the §8.1 "import" it always was.
-      const listing = getListing(ctx.db, siteId, goodType);
-      if (listing?.producerCompanyId) {
-        transferCoin(
-          ctx.db,
-          ctx.bus,
-          ctx.actorId,
-          listing.producerCompanyId,
-          price,
-          ctx.tick,
-          `Paid ${price} coin for ${goodType}.`,
-        );
-        recordLedgerEntry(
-          ctx.db,
-          listing.producerCompanyId,
-          ctx.tick,
-          'revenue',
-          price,
-          `Sold ${goodType} at the market.`,
-        );
-      } else {
-        sinkCoin(ctx.db, ctx.bus, ctx.actorId, price, ctx.tick, `Paid ${price} coin for ${goodType}.`);
-      }
-      produceItem(
-        ctx.db,
-        ctx.bus,
-        withOptional(
-          {
-            id: `${ctx.actorId}-${goodType}-${ctx.tick}`,
-            type: goodType,
-            containerId: ctx.actorId,
-            tick: ctx.tick,
-            actorId: ctx.actorId,
-            note: `Bought ${goodType} at the market.`,
-          },
-          { durability: getGoodDefinition(goodType).maxDurability },
-        ),
-      );
+      buyFromMarket(ctx.db, ctx.bus, ctx.actorId, siteId, goodType, 1, ctx.tick, {
+        actorId: ctx.actorId,
+        note: `Bought ${goodType} at the market.`,
+      });
     },
   };
 }
@@ -210,16 +170,13 @@ export function createSellActionDefinition(siteId: string, goodType: string): Ac
   };
 }
 
-// §Stage 5 §9.6 "decide daily... input orders": a company selling its own
-// real surplus into a market listing — transfers actual produced items
-// (goods conservation, same as the player's own sell action above) rather
-// than conjuring quantity from nothing. Always overwrites the listing's
-// producerCompanyId to the seller (a deliberate v1 simplification: one
-// current producer per (site, good), not per-unit provenance of the stall's
-// stock — once a company sells into a listing, buyers pay *that* company
-// even against any older, differently-sourced stock still sitting in the
-// same listing's count). Returns how many units actually sold (capped by
-// real inventory — a company can never sell more than it has).
+// §Stage 5 §9.6 "decide daily... input orders": a company consigning its
+// own real surplus to a market — transfers actual produced items (goods
+// conservation, same as the player's own sell action above) rather than
+// conjuring quantity from nothing, and records each unit as consigned by
+// this company (market_consignments) so it's paid when — and only when —
+// that unit is actually bought. Returns how many units were consigned
+// (capped by real inventory — a company can never sell more than it has).
 export function sellSurplusToMarket(
   db: Database,
   bus: EventBus,
@@ -239,6 +196,10 @@ export function sellSurplusToMarket(
       note: `Sold to the market.`,
       scope: 'business',
     });
+    db.run(
+      'INSERT INTO market_consignments (item_id, site_id, consignor_id, consigned_at_tick) VALUES (?, ?, ?, ?)',
+      [item.id, siteId, companyId, tick],
+    );
     sold++;
   }
   if (sold === 0) return 0;
@@ -268,19 +229,11 @@ export function sellSurplusToMarket(
 // yet; spot purchases through the same market listings every other buyer
 // uses is the honest, smaller mechanism this stage actually builds.
 //
-// Coin/stock/ledger are settled as ONE lump transaction for the whole
-// purchase, not unit by unit — found the hard way: an earlier per-unit
-// version (transferCoin + recordLedgerEntry inside the loop) emitted two
-// event_log rows per unit, and a well-managed company restocking daily in
-// 40-unit batches over a 90-day run pushed stage4.test.ts's checkpointed
-// run from ~165s past its 300s regression guard. This matches the existing
-// precedent of population/cadence.ts's own weekly lump wage payment (one
-// event for a week's wages, not one per shift). Item creation is still
-// genuinely per-unit below — §7.1 provenance is per-item by design, not
-// something to batch away — so this halves the event/DB-write volume
-// without losing any provenance fidelity.
-// Returns how many units were actually bought (capped by stock and by the
-// buyer's own coin).
+// Settles through buyFromMarket below: coin is paid in one lump per seller
+// (not per unit — an earlier per-unit version emitted two event_log rows
+// per unit and measurably slowed long runs), while goods stay per-unit
+// items with full provenance. Returns how many units were actually bought
+// (capped by stock and by the buyer's own coin).
 export function companyBuyFromMarket(
   db: Database,
   bus: EventBus,
@@ -297,56 +250,125 @@ export function companyBuyFromMarket(
   const quantity = Math.min(maxQuantity, listing.quantity, maxAffordable);
   if (quantity <= 0) return 0;
 
-  const totalCost = quantity * listing.price;
-  decrementStock(db, siteId, goodType, quantity);
-  if (listing.producerCompanyId) {
-    transferCoin(
-      db,
-      bus,
-      companyId,
-      listing.producerCompanyId,
-      totalCost,
-      tick,
-      `Bought ${quantity} ${goodType} from the market.`,
-      'business',
-    );
-    recordLedgerEntry(
-      db,
-      listing.producerCompanyId,
-      tick,
-      'revenue',
-      totalCost,
-      `Sold ${quantity} ${goodType} at the market.`,
-    );
-  } else {
-    sinkCoin(
-      db,
-      bus,
-      companyId,
-      totalCost,
-      tick,
-      `Bought ${quantity} ${goodType} from the market.`,
-      'business',
-    );
-  }
+  const purchase = buyFromMarket(db, bus, companyId, siteId, goodType, quantity, tick, {
+    note: `Bought ${quantity} ${goodType} at the market.`,
+    scope: 'business',
+  });
   recordLedgerEntry(
     db,
     companyId,
     tick,
     'material_cost',
-    totalCost,
+    purchase.totalCost,
     `Bought ${quantity} ${goodType} at the market.`,
+    purchase.itemIds.length,
   );
+  return purchase.itemIds.length;
+}
 
-  for (let i = 0; i < quantity; i++) {
-    produceItem(db, bus, {
-      id: `${companyId}-${goodType}-${tick}-${i}`,
-      type: goodType,
-      containerId: companyId,
-      tick,
-      note: `Bought ${goodType} at the market.`,
-      scope: 'business',
-    });
+export interface MarketPurchase {
+  // Every unit the buyer now holds, in the order taken (physical stock
+  // first, oldest first; then any merchant imports).
+  itemIds: string[];
+  totalCost: number;
+}
+
+// The one way anything leaves a market (§8.1 rule 1). A listing's quantity
+// is the real, physical units sitting in the site's stock container plus,
+// for goods the merchant faucet still imports (§7.2: bread's seeded
+// bridging buffer, shoes, cloaks, tools), a remainder with no physical
+// existence yet. A purchase takes physical units first, oldest first —
+// each keeps its own id and full provenance chain (so a household's loaf
+// traces back through the market to the bakery that baked it) — and only
+// the shortfall is produced fresh as a merchant import.
+//
+// Payment follows the units: a unit consigned by a local company
+// (market_consignments) pays that company, one lump per company; a
+// merchant-owned unit (the stall bought it outright from the player or a
+// household, or it's an auctioned tool) or an import sinks the coin out
+// of the economy — the merchant faucet's other side (§8.1 rule 2).
+//
+// Callers must have checked the buyer can afford quantity × listing price
+// (transferCoin/sinkCoin throw otherwise). quantity is capped by the
+// listing's own quantity.
+export function buyFromMarket(
+  db: Database,
+  bus: EventBus,
+  buyerId: string,
+  siteId: string,
+  goodType: string,
+  quantity: number,
+  tick: number,
+  options: { actorId?: string; note?: string; scope?: EventScope } = {},
+): MarketPurchase {
+  const listing = getListing(db, siteId, goodType);
+  const units = Math.min(quantity, listing?.quantity ?? 0);
+  if (!listing || units <= 0) return { itemIds: [], totalCost: 0 };
+  const price = listing.price;
+  const scope = options.scope ?? 'personal';
+  const note = options.note ?? `Bought ${goodType} at the market.`;
+
+  const physical = queryRows(
+    db,
+    `SELECT items.id, market_consignments.consignor_id FROM items
+     LEFT JOIN market_consignments ON market_consignments.item_id = items.id
+     WHERE items.container_id = ? AND items.type = ? AND items.status = 'active'
+     ORDER BY items.rowid LIMIT ?`,
+    [marketStockContainerId(siteId), goodType, units],
+  ).map((row) => ({ itemId: String(row[0]), consignorId: typeof row[1] === 'string' ? row[1] : null }));
+
+  // Coin first (all-or-nothing: these throw on an unaffordable purchase
+  // before any goods have moved). Map insertion order = stock order, so
+  // the payment sequence is deterministic.
+  const owedUnits = new Map<string, number>();
+  let merchantUnits = units;
+  for (const unit of physical) {
+    if (!unit.consignorId) continue;
+    owedUnits.set(unit.consignorId, (owedUnits.get(unit.consignorId) ?? 0) + 1);
+    merchantUnits--;
   }
-  return quantity;
+  for (const [consignorId, count] of owedUnits) {
+    transferCoin(db, bus, buyerId, consignorId, count * price, tick, note, scope);
+    recordLedgerEntry(
+      db,
+      consignorId,
+      tick,
+      'revenue',
+      count * price,
+      `Sold ${count} ${goodType} at the market.`,
+      count,
+    );
+  }
+  if (merchantUnits > 0) sinkCoin(db, bus, buyerId, merchantUnits * price, tick, note, scope, 'import');
+  decrementStock(db, siteId, goodType, units);
+
+  const itemIds: string[] = [];
+  for (const unit of physical) {
+    transferItem(
+      db,
+      bus,
+      unit.itemId,
+      buyerId,
+      tick,
+      withOptional({ note, scope }, { actorId: options.actorId }),
+    );
+    if (unit.consignorId) db.run('DELETE FROM market_consignments WHERE item_id = ?', [unit.itemId]);
+    itemIds.push(unit.itemId);
+  }
+  const maxDurability = getGoodDefinition(goodType).maxDurability;
+  for (let i = physical.length; i < units; i++) {
+    // goods_created is a world-unique, deterministic running count — a
+    // collision-proof id however many purchases land in the same tick.
+    const itemId = `import-${goodType}-${getConservationCounters(db).goodsCreated}`;
+    produceItem(
+      db,
+      bus,
+      withOptional(
+        { id: itemId, type: goodType, containerId: buyerId, tick, note: `${note} (merchant import)`, scope },
+        { actorId: options.actorId, durability: maxDurability },
+      ),
+    );
+    itemIds.push(itemId);
+  }
+  return { itemIds, totalCost: units * price };
 }

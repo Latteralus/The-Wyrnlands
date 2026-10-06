@@ -31,10 +31,15 @@ function rowToEvent(row: readonly unknown[]): EngineEvent {
   );
 }
 
+// Newest first. Ordered by (tick, id) rather than id alone so SQLite can walk
+// idx_event_log_scope_tick backwards and stop after `limit` rows — ordering
+// by id alone forced a temp B-tree sort of the scope's ENTIRE history on
+// every call (LogPanel calls this on every render). Same order either way:
+// ids are assigned in emission order, and ticks never go backwards.
 export function queryLog(db: Database, scope: EventScope, limit = 100): EngineEvent[] {
   const rows = queryRows(
     db,
-    'SELECT tick, scope, actor_id, type, message, data FROM event_log WHERE scope = ? ORDER BY id DESC LIMIT ?',
+    'SELECT tick, scope, actor_id, type, message, data FROM event_log WHERE scope = ? ORDER BY tick DESC, id DESC LIMIT ?',
     [scope, limit],
   );
 

@@ -25,6 +25,9 @@ describe('applyMigrations', () => {
       '0014_event_log_actor_index',
       '0015_rolled_starting_conditions',
       '0016_household_migration',
+      '0017_open_actions_index',
+      '0018_market_consignments',
+      '0019_economy_balance',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -45,6 +48,7 @@ describe('applyMigrations', () => {
         'household_members',
         'items',
         'job_slots',
+        'market_consignments',
         'market_listings',
         'needs',
         'provenance_events',

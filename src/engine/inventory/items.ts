@@ -236,7 +236,7 @@ export function destroyItem(
 // §Stage 5: consumes up to `quantity` active items of a type out of a
 // container as production inputs (a mill's grain, a bakery's flour) —
 // factored out because production/recipes.ts's two consumers (the player's
-// own work_shift action in jobs/shifts.ts, and NPCs' weekly batch in
+// own work_shift action in jobs/shifts.ts, and NPCs' daily shifts in
 // population/cadence.ts) both need the exact same "destroy N units,
 // individually provenance-logged" loop that feedHousehold (population/
 // cadence.ts) already had a bespoke version of. Returns the actual count

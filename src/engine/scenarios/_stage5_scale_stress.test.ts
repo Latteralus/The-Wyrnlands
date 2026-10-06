@@ -7,43 +7,27 @@ import { findFirstActiveItem } from '../inventory/items';
 import { FARM_JOB_SLOT_ID, PLAYER_ID, REST_BUNK_PRICE, seedDemoWorld } from '../seed/demoWorld';
 import { MINUTES_PER_DAY } from '../time/clock';
 
-// NOT part of the routine test suite (describe.skip) — even the reduced
-// 300-day target below takes on the order of 15-20 minutes, which has no
-// place in a normal `npm test`/`npm run validate` loop. Manual, opt-in —
-// remove `.skip` to run it, then restore it before committing.
+// NOT part of the routine test suite (describe.skip) — remove `.skip` to
+// run it manually. The fuller tool is `npm run sim:perf` (perf/longRun.ts),
+// which runs the same world and scripted player with per-interval timing,
+// row counts, profiling, an economy report and a determinism fingerprint.
 //
-// It reuses Stage 4's world as-is (~40 NPCs, 2 companies) rather than
-// Stage 5's eventual heavier one (full goods chains, B2B contracts, more
-// companies), so it can't prove Stage 5's exact world stays safe — only
-// that the checkpoint *mechanism itself* doesn't crash across many more
-// cycles than the 90-day exit test exercises.
-//
-// HONEST RESULT, not the hoped-for one: this originally targeted the full
-// 730 days (Stage 5's 2-year exit-test scale). Run once manually on
-// 2026-07-18, it reached day 301 (checkpoint 20) with zero WASM crashes and
-// a clean conservation audit throughout, then hit a fixed 30-minute test
-// timeout before finishing — a timeout, not a crash, but real completion of
-// the full 730-day target is NOT confirmed. Per-checkpoint cost appears to
-// grow at this scale (the 90-day/6-checkpoint exit test paces meaningfully
-// faster per checkpoint than this run did) — the cause wasn't diagnosed
-// (recompiling the wasm binary from scratch every checkpoint is inherently
-// not free, but whether it's *purely* that or something compounding across
-// many cycles is still open). The target below is set to 300 days —
-// comfortably inside what was actually observed to complete cleanly — so
-// this test reliably passes if re-run; treat "does the real 730-day target
-// complete, and why is per-checkpoint cost rising" as a real follow-up task
-// for whenever Stage 5's own exit test needs it, not something already
-// solved. See DECISIONS.md and the wyrnlands-sqljs-memory-ceiling memory.
+// History: this originally targeted 730 days and timed out at day 301 after
+// 30 minutes (2026-07-18), then was cut to 300 days. Root-caused 2026-10-06
+// (PERFORMANCE_AUDIT.md) — a full-history scan per tick plus sql.js's
+// db.exec() stack leak. The full 730 days now completes in ~2.5 minutes in
+// a single WASM module; this checkpointed version remains as a manual
+// check that the checkpoint facility also survives a 2-year run.
 describe.skip('SPIKE — pushing well past the 90-day exit test, checkpointed', () => {
   it(
-    'a 300-day run with periodic checkpointing completes without crashing',
+    'a 730-day run with periodic checkpointing completes without crashing',
     async () => {
       const SQL = await loadSqlJs();
       const db = createDatabase(SQL);
       let engine = Engine.bootstrap(db, { seed: 'stage5-scale-stress' });
       seedDemoWorld(engine);
 
-      const SIMULATED_TICKS = 300 * MINUTES_PER_DAY;
+      const SIMULATED_TICKS = 730 * MINUTES_PER_DAY;
       const CHECKPOINT_INTERVAL_TICKS = 15 * MINUTES_PER_DAY;
       let lastCheckpointTick = 0;
       let checkpointCount = 0;
@@ -113,7 +97,7 @@ describe.skip('SPIKE — pushing well past the 90-day exit test, checkpointed', 
       }
 
       const elapsedMs = Date.now() - start;
-      console.log(`300-day checkpointed run: ${checkpointCount} checkpoints, ${elapsedMs}ms wall-clock.`);
+      console.log(`730-day checkpointed run: ${checkpointCount} checkpoints, ${elapsedMs}ms wall-clock.`);
 
       expect(engine.tick).toBeGreaterThanOrEqual(SIMULATED_TICKS);
       expect(engine.queryLog('world', 10_000).some((e) => e.type === 'audit.failed')).toBe(false);

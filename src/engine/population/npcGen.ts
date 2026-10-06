@@ -52,7 +52,7 @@ export const SURNAMES = [
   'Wren',
 ];
 
-const STARTING_RESERVE = 80; // placeholder "modest family savings" — real rolled starting conditions are Stage 5 (§5.4)
+const STARTING_RESERVE = 400; // placeholder "modest family savings" — real rolled starting conditions are Stage 5 (§5.4)
 const SPARE_CLOAK_CHANCE = 0.4; // gives the adaptation ladder's "sell belongings" rung something real to bite on
 
 export function pick<T>(rng: () => number, items: readonly T[]): T {

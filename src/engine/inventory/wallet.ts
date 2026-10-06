@@ -28,6 +28,11 @@ export function faucetCoin(
   tick: number,
   note?: string,
   scope: EventScope = 'personal',
+  // Which designed faucet/sink this is (§8.1 rule 2) — e.g. 'charity',
+  // 'import', 'export', 'immigration' — recorded in the event so the
+  // economy report can attribute money flows. Optional; untagged flows
+  // report as 'other'.
+  channel?: string,
 ): void {
   if (amount <= 0) throw new Error(`faucetCoin amount must be positive, got ${amount}`);
   ensureWallet(db, ownerId);
@@ -39,7 +44,7 @@ export function faucetCoin(
     actorId: ownerId,
     type: 'coin.faucet',
     message: note ?? `${ownerId} received ${amount} coin from outside the economy.`,
-    data: { amount },
+    data: channel ? { amount, channel } : { amount },
   });
 }
 
@@ -53,6 +58,11 @@ export function sinkCoin(
   tick: number,
   note?: string,
   scope: EventScope = 'personal',
+  // Which designed faucet/sink this is (§8.1 rule 2) — e.g. 'charity',
+  // 'import', 'export', 'immigration' — recorded in the event so the
+  // economy report can attribute money flows. Optional; untagged flows
+  // report as 'other'.
+  channel?: string,
 ): void {
   if (amount <= 0) throw new Error(`sinkCoin amount must be positive, got ${amount}`);
   const balance = getBalance(db, ownerId);
@@ -67,7 +77,7 @@ export function sinkCoin(
     actorId: ownerId,
     type: 'coin.sink',
     message: note ?? `${ownerId} paid ${amount} coin out of the economy.`,
-    data: { amount },
+    data: channel ? { amount, channel } : { amount },
   });
 }
 

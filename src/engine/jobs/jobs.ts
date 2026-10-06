@@ -1,4 +1,5 @@
 import { queryRow, queryRows } from '../db/sqlite';
+import { getEntityName } from '../entities';
 import { addXp, getSuccessChance, TRADING_SKILL } from '../skills/skills';
 import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
@@ -16,7 +17,10 @@ export interface JobSlot {
   wageMax: number;
   shiftDurationTicks: number;
   toolGoodType: string | null;
+  // Positions currently posted (filled or open)...
   capacity: number;
+  // ...and the most this company's current upgrade tier supports (§9.5).
+  maxCapacity: number;
 }
 
 export interface CreateJobSlotParams {
@@ -33,8 +37,8 @@ export interface CreateJobSlotParams {
 
 export function createJobSlot(db: Database, params: CreateJobSlotParams): void {
   db.run(
-    `INSERT INTO job_slots (id, company_id, title, skill, wage_min, wage_max, shift_duration_ticks, tool_good_type, capacity)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO job_slots (id, company_id, title, skill, wage_min, wage_max, shift_duration_ticks, tool_good_type, capacity, max_capacity)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       params.id,
       params.companyId,
@@ -45,12 +49,14 @@ export function createJobSlot(db: Database, params: CreateJobSlotParams): void {
       params.shiftDurationTicks,
       params.toolGoodType ?? null,
       params.capacity ?? 1,
+      params.capacity ?? 1,
     ],
   );
 }
 
 const JOB_SLOT_COLUMNS = `job_slots.id, job_slots.company_id, companies.name, job_slots.title, job_slots.skill,
-  job_slots.wage_min, job_slots.wage_max, job_slots.shift_duration_ticks, job_slots.tool_good_type, job_slots.capacity`;
+  job_slots.wage_min, job_slots.wage_max, job_slots.shift_duration_ticks, job_slots.tool_good_type, job_slots.capacity,
+  COALESCE(job_slots.max_capacity, job_slots.capacity)`;
 const JOB_SLOT_FROM = 'job_slots JOIN companies ON companies.id = job_slots.company_id';
 
 function rowToJobSlot(row: unknown[]): JobSlot {
@@ -65,6 +71,7 @@ function rowToJobSlot(row: unknown[]): JobSlot {
     shiftDurationTicks: Number(row[7]),
     toolGoodType: typeof row[8] === 'string' ? row[8] : null,
     capacity: Number(row[9]),
+    maxCapacity: Number(row[10]),
   };
 }
 
@@ -100,6 +107,10 @@ export function listJobSlotsForCompany(db: Database, companyId: string): JobSlot
 // tryUpgrade is the only caller; it's responsible for the cost/tier side.
 export function setJobSlotCapacity(db: Database, jobSlotId: string, capacity: number): void {
   db.run('UPDATE job_slots SET capacity = ? WHERE id = ?', [capacity, jobSlotId]);
+}
+
+export function setJobSlotMaxCapacity(db: Database, jobSlotId: string, maxCapacity: number): void {
+  db.run('UPDATE job_slots SET max_capacity = ? WHERE id = ?', [maxCapacity, jobSlotId]);
 }
 
 export interface Employment {
@@ -240,11 +251,15 @@ export function applyForJob(
     [entityId, jobSlotId, jobSlot.companyId, wage, tick],
   );
 
+  // Second person for the player's own log; an NPC hire (logged to the
+  // settlement log) is narrated by name.
+  const personal = (options.scope ?? 'personal') === 'personal';
+  const who = personal ? 'you' : getEntityName(db, entityId);
   const message = !options.haggle
-    ? `${jobSlot.companyName} takes you on as ${jobSlot.title} at the posted ${wage} coin a shift.`
+    ? `${jobSlot.companyName} takes ${who} on as ${jobSlot.title} at the posted ${wage} coin a shift.`
     : haggleSucceeded
-      ? `${jobSlot.companyName} takes you on as ${jobSlot.title} — you talk them up to ${wage} coin a shift.`
-      : `${jobSlot.companyName} takes you on as ${jobSlot.title} at ${wage} coin a shift — your haggling gets you nowhere.`;
+      ? `${jobSlot.companyName} takes ${who} on as ${jobSlot.title} — ${personal ? 'you talk them' : 'haggled'} up to ${wage} coin a shift.`
+      : `${jobSlot.companyName} takes ${who} on as ${jobSlot.title} at ${wage} coin a shift — ${personal ? 'your' : 'the'} haggling gets nowhere.`;
 
   bus.emit({
     tick,

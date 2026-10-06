@@ -34,6 +34,7 @@ import {
   transferItem,
   type ProduceItemParams,
 } from './inventory/items';
+import { applySpoilage } from './inventory/spoilage';
 import { ensureWallet, faucetCoin, getBalance, sinkCoin, transferCoin } from './inventory/wallet';
 import {
   applyForJob,
@@ -59,6 +60,7 @@ import {
   seedListing,
   type MarketListing,
 } from './market/market';
+import { applyMerchantTrade } from './market/merchant';
 import { driftMarketPrices } from './market/pricing';
 import {
   ensureNeeds,
@@ -73,7 +75,8 @@ import {
   applyHouseholdDailyCadence,
   applyHouseholdMigrationWeeklyCadence,
   applyNpcJobSeekingWeeklyCadence,
-  applyNpcLaborWeeklyCadence,
+  applyParishTitheWeeklyCadence,
+  applyNpcLaborDailyCadence,
 } from './population/cadence';
 import {
   addHouseholdMember,
@@ -99,6 +102,7 @@ import {
 } from './world/sites';
 import type { ActionDefinition, QueuedAction } from './actions/types';
 import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
+import type { PhaseTimer } from './perf/phaseTimer';
 import type { Database } from 'sql.js';
 
 // A body-slot garment needs at least this much warmth rating to count as
@@ -252,11 +256,25 @@ export class Engine {
     }
   }
 
+  // Measurement hook (perf/longRun.ts) — null in normal play, in which case
+  // timed() is a plain call. Not simulation state; never persisted.
+  phaseTimer: PhaseTimer | null = null;
+
+  private timed(phase: string, fn: () => void): void {
+    if (!this.phaseTimer) {
+      fn();
+      return;
+    }
+    const start = performance.now();
+    fn();
+    this.phaseTimer.record(phase, performance.now() - start);
+  }
+
   private stepOneTick(): void {
     const nextTick = this.tick + 1;
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
-    this.applyNeedsCadence(nextTick);
-    this.processActiveActions(nextTick);
+    this.timed('tick.needs', () => this.applyNeedsCadence(nextTick));
+    this.timed('tick.actions', () => this.processActiveActions(nextTick));
 
     // §4.2's staggered cadence: daily (household budgets) → weekly
     // (hiring/wages) → nightly (conservation audit). NPCs' entire economic
@@ -266,28 +284,38 @@ export class Engine {
     // comment for why that split is load-bearing, not cosmetic.
     if (nextTick % MINUTES_PER_DAY === 0) {
       const exposedToCold = deriveCalendar(nextTick, this.getStartSeasonIndex()).season === 'winter';
-      applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold);
 
-      // §Stage 5: smoothed pricing (§8.1 rule 4) and companies' own
-      // Management-weighted daily decisions (§9.6) — restocking inputs
-      // ahead of this week's production below, and selling last week's
-      // output. Both are new-this-stage; households' own cadence above is
-      // unaffected by them.
-      driftMarketPrices(this.db);
-      applyCompanyDailyCadence(this.db, this.bus, nextTick);
+      // The day's economy, in the order goods actually move (2026-10-06
+      // balancing pass): workers' shifts produce (workdays only) →
+      // companies restock inputs, put the day's output on the market and
+      // (weekly) pay owners → the merchant imports into shortages and buys
+      // up gluts → prices drift toward the new stock levels → households
+      // eat and heat from what's on the shelves → perishables spoil.
+      this.timed('daily.labor', () => applyNpcLaborDailyCadence(this.db, this.bus, nextTick, this.rng));
+      this.timed('daily.companies', () => applyCompanyDailyCadence(this.db, this.bus, nextTick));
+      this.timed('daily.merchant', () => applyMerchantTrade(this.db, this.bus, nextTick));
+      this.timed('daily.prices', () => driftMarketPrices(this.db));
+      this.timed('daily.households', () =>
+        applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold),
+      );
+      this.timed('daily.spoilage', () => applySpoilage(this.db, this.bus, nextTick));
 
       if ((nextTick / MINUTES_PER_DAY) % 7 === 0) {
-        applyNpcLaborWeeklyCadence(this.db, this.bus, nextTick);
         // §Stage 5: fills newly-opened job slots (company growth) and
-        // realizes §10's "another member works" adaptation rung — see
-        // population/cadence.ts's header comment on this function.
-        applyNpcJobSeekingWeeklyCadence(this.db, this.bus, nextTick, this.rng);
-        // §11.4 Migration — after labor/job-seeking so a household about to
-        // qualify gets this week's hiring pass first, matching §10's ladder
-        // order (migrate is the last rung, after "another member works").
-        applyHouseholdMigrationWeeklyCadence(this.db, this.bus, nextTick, this.rng);
+        // realizes §10's "another member works" adaptation rung.
+        this.timed('weekly.jobSeeking', () =>
+          applyNpcJobSeekingWeeklyCadence(this.db, this.bus, nextTick, this.rng),
+        );
+        // §11.4 Migration — after job-seeking so a household about to
+        // qualify gets this week's hiring pass first (migrate is the
+        // ladder's last rung, after "another member works").
+        this.timed('weekly.migration', () =>
+          applyHouseholdMigrationWeeklyCadence(this.db, this.bus, nextTick, this.rng),
+        );
+        // §8.2: the parish's charity fund is replenished by tithes.
+        this.timed('weekly.tithe', () => applyParishTitheWeeklyCadence(this.db, this.bus, nextTick));
       }
-      runConservationAudit(this.db, this.bus, nextTick);
+      this.timed('nightly.audit', () => runConservationAudit(this.db, this.bus, nextTick));
     }
   }
 
@@ -511,7 +539,9 @@ export class Engine {
 
   // A company is also an entities row (its own wallet/inventory owner),
   // same as a person — see companies/companies.ts's header comment.
-  createCompany(company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick'>): void {
+  createCompany(
+    company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick' | 'lastUpgradedTick'>,
+  ): void {
     this.createEntity(company.id, company.name);
     createCompany(this.db, company);
     this.ensureWallet(company.id);
@@ -587,7 +617,7 @@ export class Engine {
 
   // A household is also an entities row (its own wallet/inventory owner),
   // same as a company — see population/households.ts's header comment.
-  createHousehold(household: Omit<Household, 'destituteSinceTick' | 'departedAtTick'>): void {
+  createHousehold(household: Omit<Household, 'destituteSinceTick' | 'departedAtTick' | 'hungerDays'>): void {
     this.createEntity(household.id, household.name);
     createHousehold(this.db, household);
     this.ensureWallet(household.id);
