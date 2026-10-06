@@ -1,6 +1,6 @@
 # The Wyrnlands
 
-Offline medieval life-simulation / economic sandbox. Read [MASTERPLAN.md](./MASTERPLAN.md) for the design; [DECISIONS.md](./DECISIONS.md) for where the code diverges from or refines it. [PERFORMANCE_AUDIT.md](./PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./STAGE5_AUDIT.md) record the long-run performance work and the current state of the Stage 5 economy.
+Offline medieval life-simulation / economic sandbox. Read [MASTERPLAN.md](./MASTERPLAN.md) for the design; [DECISIONS.md](./DECISIONS.md) for where the code diverges from or refines it. [PERFORMANCE_AUDIT.md](./PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./STAGE5_AUDIT.md) record the long-run performance work and the current state of the Stage 5 economy. (All Documents now moved to ./Documents/ )
 
 ## Stack
 
