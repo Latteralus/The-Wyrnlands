@@ -43,6 +43,7 @@ import {
   countActiveEmploymentsForSlot,
   createJobSlot,
   getActiveEmployment,
+  getJobSlot,
   listJobOpenings,
   listJobSlotsForCompany,
   quitJob,
@@ -54,6 +55,7 @@ import {
   type JobSlot,
   type QuitJobOptions,
 } from './jobs/jobs';
+import { createWorkShiftActionDefinition } from './jobs/shifts';
 import { attachLogger, queryActorLog, queryLog } from './logs/logger';
 import { recordMarketDay } from './market/history';
 import {
@@ -123,6 +125,21 @@ import type { Database } from 'sql.js';
 // protection from a winter chill (§6). Placeholder threshold alongside the
 // needs decay constants in needs.ts.
 const WARMTH_PROTECTION_THRESHOLD = 30;
+
+// How often an idle autonomous character's routine is consulted — every ten
+// in-game minutes, not every tick: plenty responsive for a day's rhythm, and
+// a tenth of the queries.
+const ROUTINE_INTERVAL_TICKS = 10;
+
+// A routine's choice: an action type, or a shift at a job slot (the engine
+// registers that slot's shift action if need be, and records the day).
+export type RoutineChoice =
+  { type: string; workShiftJobSlotId?: never } | { type?: never; workShiftJobSlotId: string };
+export type RoutinePolicy = (
+  engine: Engine,
+  actorId: string,
+  lastShiftDay: number | null,
+) => RoutineChoice | null;
 
 export interface EngineOptions {
   seed: string;
@@ -295,6 +312,9 @@ export class Engine {
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
     this.timed('tick.needs', () => this.applyNeedsCadence(nextTick));
     this.timed('tick.actions', () => this.processActiveActions(nextTick));
+    if (this.routinePolicy && nextTick % ROUTINE_INTERVAL_TICKS === 0) {
+      this.timed('tick.routine', () => this.applyRoutines(nextTick));
+    }
 
     // §4.2's staggered cadence: daily (household budgets) → weekly
     // (hiring/wages) → nightly (conservation audit). NPCs' entire economic
@@ -386,6 +406,73 @@ export class Engine {
 
   registerActionType(definition: ActionDefinition): void {
     this.actions.register(definition);
+  }
+
+  // --- Daily routines (autonomous characters) ---
+  //
+  // A character marked autonomous lives their day without every action
+  // being queued by hand: whenever they're idle, the routine policy picks
+  // what they do next (work their shift, eat, drink, sleep). The policy is
+  // world content — it chooses among the seed's own action types, and seed
+  // code registers it alongside them (seed/demoWorld.ts) — while which
+  // characters are autonomous is saved world state (autonomous_actors).
+  // Anything queued by hand runs first: the routine only acts when the
+  // character has nothing to do.
+  private routinePolicy: RoutinePolicy | null = null;
+
+  setRoutinePolicy(policy: RoutinePolicy | null): void {
+    this.routinePolicy = policy;
+  }
+
+  setAutonomous(entityId: string, autonomous: boolean): void {
+    if (autonomous) this.db.run('INSERT OR IGNORE INTO autonomous_actors (entity_id) VALUES (?)', [entityId]);
+    else this.db.run('DELETE FROM autonomous_actors WHERE entity_id = ?', [entityId]);
+  }
+
+  isAutonomous(entityId: string): boolean {
+    return queryRow(this.db, 'SELECT 1 FROM autonomous_actors WHERE entity_id = ?', [entityId]) !== undefined;
+  }
+
+  // Shift actions exist per job slot; a business founded during play has
+  // slots no seed code knew about, so they're registered when first needed.
+  ensureWorkShiftAction(jobSlotId: string): string {
+    const type = `work_shift_${jobSlotId}`;
+    if (!this.actions.has(type)) {
+      const slot = getJobSlot(this.db, jobSlotId);
+      if (!slot) throw new Error(`Unknown job slot: "${jobSlotId}"`);
+      this.actions.register(
+        createWorkShiftActionDefinition(jobSlotId, { durationTicks: slot.shiftDurationTicks }),
+      );
+    }
+    return type;
+  }
+
+  private applyRoutines(tick: number): void {
+    const policy = this.routinePolicy;
+    if (!policy) return;
+    const rows = queryRows(
+      this.db,
+      'SELECT entity_id, last_shift_day FROM autonomous_actors ORDER BY entity_id',
+    );
+    for (const row of rows) {
+      const actorId = String(row[0]);
+      if (getCurrentAction(this.db, actorId)) continue;
+      const lastShiftDay = row[1] === null ? null : Number(row[1]);
+      const choice = policy(this, actorId, lastShiftDay);
+      if (!choice) continue;
+      let type: string;
+      if (choice.workShiftJobSlotId !== undefined) {
+        type = this.ensureWorkShiftAction(choice.workShiftJobSlotId);
+        this.db.run('UPDATE autonomous_actors SET last_shift_day = ? WHERE entity_id = ?', [
+          Math.floor(tick / MINUTES_PER_DAY),
+          actorId,
+        ]);
+      } else {
+        type = choice.type;
+      }
+      if (!this.actions.has(type)) continue;
+      enqueueAction(this.db, this.actions, actorId, type, tick);
+    }
   }
 
   createEntity(id: string, name: string): void {

@@ -5,12 +5,14 @@ import {
   type ProfileNavigation,
 } from '../components/ProfileParts';
 import { SceneHeader } from '../components/SceneHeader';
-import { capitalize, formatDate } from '../components/profileFormat';
+import { capitalize, formatDate, formatTimestamp } from '../components/profileFormat';
 import type { BusinessProfile, LedgerSummary, UiApi } from '../engine/ui-api';
 
 interface BusinessScreenProps extends ProfileNavigation {
   uiApi: UiApi;
   companyId: string;
+  playerId: string;
+  onAction: () => void;
   inspect: boolean;
   onToggleInspect: () => void;
   onBack: () => void;
@@ -72,6 +74,8 @@ function LedgerColumn({ label, ledger }: { label: string; ledger: LedgerSummary 
 export function BusinessScreen({
   uiApi,
   companyId,
+  playerId,
+  onAction,
   inspect,
   onToggleInspect,
   onBack,
@@ -81,7 +85,18 @@ export function BusinessScreen({
   const profile = uiApi.getBusinessProfile(companyId);
   const slots = uiApi.listJobSlotsForCompany(companyId);
   // §14.3 "Business logs (the ledger as narrative)".
-  const log = uiApi.queryActorLog(companyId, 30);
+  const log = uiApi.queryActorLog(companyId, 40);
+  const playerJob = uiApi.getEmployment(playerId);
+  const playerSlot = playerJob ? slots.find((slot) => slot.id === playerJob.jobSlotId) : undefined;
+  const openSlots = slots.filter((slot) => uiApi.countActiveEmploymentsForSlot(slot.id) < slot.capacity);
+  const apply = (jobSlotId: string, haggle: boolean) => {
+    uiApi.applyForJob(playerId, jobSlotId, haggle);
+    onAction();
+  };
+  const quit = () => {
+    uiApi.quitJob(playerId);
+    onAction();
+  };
 
   return (
     <section>
@@ -178,6 +193,42 @@ export function BusinessScreen({
             </ul>
           )}
 
+          <h3>Work</h3>
+          {profile.status === 'closed' ? (
+            <p className="profile-empty">It has closed; nobody works here now.</p>
+          ) : playerSlot && playerJob ? (
+            <div className="job-actions">
+              <p className="jobs-current">
+                You work here as {playerSlot.title.toLowerCase()} at {playerJob.wage} coin a shift. You go to
+                your shift on your own each workday.
+              </p>
+              <button type="button" onClick={quit}>
+                Quit this job
+              </button>
+            </div>
+          ) : playerJob ? (
+            <p className="profile-muted">
+              You already work at {uiApi.getCompany(playerJob.companyId)?.name ?? 'another business'}.
+            </p>
+          ) : openSlots.length === 0 ? (
+            <p className="profile-empty">No positions open right now.</p>
+          ) : (
+            openSlots.map((slot) => (
+              <div key={slot.id} className="job-actions">
+                <span>
+                  {slot.title}, {slot.wageMin}–{slot.wageMax} coin a shift
+                  {slot.toolGoodType ? ` (the ${slot.toolGoodType} is provided)` : ''}
+                </span>
+                <button type="button" onClick={() => apply(slot.id, false)}>
+                  Apply at the posted {slot.wageMin} coin
+                </button>
+                <button type="button" onClick={() => apply(slot.id, true)}>
+                  Apply and haggle
+                </button>
+              </div>
+            ))
+          )}
+
           <h3>On the premises</h3>
           <InventoryList lines={profile.stock} empty="Nothing on hand." />
 
@@ -219,7 +270,7 @@ export function BusinessScreen({
             {log.length === 0 && <li className="log-empty">Nothing notable on record.</li>}
             {log.map((event, i) => (
               <li key={i}>
-                <span className="log-tick">[{event.tick}]</span> {event.message}
+                <span className="log-tick">{formatTimestamp(uiApi, event.tick)}</span> {event.message}
               </li>
             ))}
           </ul>

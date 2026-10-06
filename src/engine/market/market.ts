@@ -1,5 +1,6 @@
 import { recordLedgerEntry } from '../companies/companies';
 import { queryRow, queryRows } from '../db/sqlite';
+import { getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import { getConservationCounters } from '../inventory/counters';
 import { findFirstActiveItem, produceItem, transferItem } from '../inventory/items';
@@ -114,13 +115,31 @@ export function createBuyActionDefinition(siteId: string, goodType: string): Act
         success: true,
         message: `You buy ${goodType} for ${listing.price} coin.`,
         data: { price: listing.price },
+        quiet: true,
       };
     },
     applyOutcome: (ctx, outcome) => {
       if (!outcome.success) return;
-      buyFromMarket(ctx.db, ctx.bus, ctx.actorId, siteId, goodType, 1, ctx.tick, {
+      const purchase = buyFromMarket(ctx.db, ctx.bus, ctx.actorId, siteId, goodType, 1, ctx.tick, {
         actorId: ctx.actorId,
         note: `Bought ${goodType} at the market.`,
+      });
+      const you = narrativeName(ctx.db, ctx.actorId) === 'you';
+      ctx.bus.emit({
+        tick: ctx.tick,
+        scope: 'personal',
+        actorId: ctx.actorId,
+        type: 'market.purchase',
+        message:
+          `${you ? 'You buy' : `${getEntityName(ctx.db, ctx.actorId)} buys`} ${purchase.itemIds.length} ${goodType} at the market stall ` +
+          `for ${purchase.totalCost} coin (${purchase.unitPrice} each) — ${describeSources(ctx.db, purchase.sources)}.`,
+        data: {
+          goodType,
+          units: purchase.itemIds.length,
+          unitPrice: purchase.unitPrice,
+          cost: purchase.totalCost,
+          sources: purchase.sources,
+        },
       });
     },
   };
@@ -204,6 +223,14 @@ export function sellSurplusToMarket(
     sold++;
   }
   if (sold === 0) return 0;
+  bus.emit({
+    tick,
+    scope: 'business',
+    actorId: companyId,
+    type: 'business.consigned',
+    message: `Takes ${sold} ${goodType} to the market stall to sell at ${unitPrice} coin each.`,
+    data: { goodType, units: sold, unitPrice },
+  });
 
   const listing = getListing(db, siteId, goodType);
   if (listing) {
@@ -264,6 +291,22 @@ export function companyBuyFromMarket(
     `Bought ${quantity} ${goodType} at the market.`,
     purchase.itemIds.length,
   );
+  bus.emit({
+    tick,
+    scope: 'business',
+    actorId: companyId,
+    type: 'business.bought',
+    message:
+      `Buys ${purchase.itemIds.length} ${goodType} at the market stall: ${purchase.unitPrice} coin each, ` +
+      `${purchase.totalCost} coin in all (${describeSources(db, purchase.sources)}).`,
+    data: {
+      goodType,
+      units: purchase.itemIds.length,
+      unitPrice: purchase.unitPrice,
+      cost: purchase.totalCost,
+      sources: purchase.sources,
+    },
+  });
   return purchase.itemIds.length;
 }
 
@@ -272,6 +315,10 @@ export interface MarketPurchase {
   // first, oldest first; then any merchant imports).
   itemIds: string[];
   totalCost: number;
+  unitPrice: number;
+  // Whose stock it came from: a consigning business or person, or null for
+  // the merchant (his own stock, or fresh imports) — in the order paid.
+  sources: { sellerId: string | null; units: number }[];
 }
 
 // The one way anything leaves a market (§8.1 rule 1). A listing's quantity
@@ -304,7 +351,7 @@ export function buyFromMarket(
 ): MarketPurchase {
   const listing = getListing(db, siteId, goodType);
   const units = Math.min(quantity, listing?.quantity ?? 0);
-  if (!listing || units <= 0) return { itemIds: [], totalCost: 0 };
+  if (!listing || units <= 0) return { itemIds: [], totalCost: 0, unitPrice: 0, sources: [] };
   const price = listing.price;
   const scope = options.scope ?? 'personal';
   const note = options.note ?? `Bought ${goodType} at the market.`;
@@ -339,6 +386,14 @@ export function buyFromMarket(
       `Sold ${count} ${goodType} at the market.`,
       count,
     );
+    bus.emit({
+      tick,
+      scope: 'business',
+      actorId: consignorId,
+      type: 'business.sold',
+      message: `Sells ${count} ${goodType} to ${narrativeName(db, buyerId)} at the market stall: ${price} coin each, ${count * price} coin in all.`,
+      data: { buyerId, goodType, units: count, price },
+    });
   }
   if (merchantUnits > 0) sinkCoin(db, bus, buyerId, merchantUnits * price, tick, note, scope, 'import');
   decrementStock(db, siteId, goodType, units);
@@ -372,5 +427,25 @@ export function buyFromMarket(
     );
     itemIds.push(itemId);
   }
-  return { itemIds, totalCost: units * price };
+  const sources: MarketPurchase['sources'] = [...owedUnits].map(([sellerId, n]) => ({ sellerId, units: n }));
+  if (merchantUnits > 0) sources.push({ sellerId: null, units: merchantUnits });
+  return { itemIds, totalCost: units * price, unitPrice: price, sources };
+}
+
+// How a business log names whoever it traded with — the player's entity is
+// called "You", which reads as "you" mid-sentence.
+function narrativeName(db: Database, entityId: string): string {
+  const name = getEntityName(db, entityId);
+  return name === 'You' ? 'you' : name;
+}
+
+// "25 from Oster Farm, 15 brought in by the merchant"
+export function describeSources(db: Database, sources: MarketPurchase['sources']): string {
+  return sources
+    .map((s) =>
+      s.sellerId === null
+        ? `${s.units} brought in by the merchant`
+        : `${s.units} from ${narrativeName(db, s.sellerId)}`,
+    )
+    .join(', ');
 }

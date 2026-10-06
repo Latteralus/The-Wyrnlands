@@ -1,4 +1,5 @@
 import { queryRow, queryRows } from '../db/sqlite';
+import { getEntityName, isYou } from '../entities';
 import { getGoodDefinition, type GearSlot } from '../goods/catalog';
 import { destroyItem, getItem } from '../inventory/items';
 import type { EventBus } from '../eventBus';
@@ -33,7 +34,9 @@ export function equipItem(db: Database, bus: EventBus, entityId: string, itemId:
     scope: 'personal',
     actorId: entityId,
     type: 'gear.equipped',
-    message: `${entityId} equips ${item.type}.`,
+    message: isYou(db, entityId)
+      ? `You put on your ${item.type}.`
+      : `${getEntityName(db, entityId)} puts on a ${item.type}.`,
     data: { itemId, slot: def.slot },
   });
 }

@@ -10,6 +10,10 @@ export class ActionRegistry {
     this.definitions.set(definition.type, definition);
   }
 
+  has(type: string): boolean {
+    return this.definitions.has(type);
+  }
+
   get(type: string): ActionDefinition {
     const definition = this.definitions.get(type);
     if (!definition) throw new Error(`Unknown action type: "${type}"`);

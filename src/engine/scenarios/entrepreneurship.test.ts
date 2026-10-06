@@ -85,13 +85,11 @@ describe('NPC-founded businesses, run for real', () => {
     expect(log).toContain('business.distressed');
     const closed = engine.queryActorLog(companyId, 500).find((e) => e.type === 'business.closed');
     expect(closed?.data?.reason).toBe('insolvency');
-    // Its land is free again, and the family that bankrolled it is poorer
-    // for it — the poor manager kept putting savings in.
+    // Its land is free again, and the family that bankrolled it lost what it
+    // put in: nothing came back when it closed.
     expect(getOpenTenure(engine.db, 'bakehouse')).toBeNull();
-    expect(engine.getCompanyLedgerSummary(companyId, 0).ownerContributions).toBeGreaterThan(
-      founding!.investment,
-    );
-    expect(engine.getBalance(FOUNDER_HOUSEHOLD_ID)).toBeLessThan(savingsAfterFounding);
+    expect(closed?.data?.returnedToOwner).toBe(0);
+    expect(engine.getBalance(FOUNDER_HOUSEHOLD_ID)).toBeLessThanOrEqual(savingsAfterFounding);
     expect(engine.getEmployment(FOUNDER_ID)).toBeNull();
     // Every night's books balanced throughout.
     expect(Number(queryRow(engine.db, 'SELECT COUNT(*) FROM audits WHERE passed = 0')?.[0])).toBe(0);

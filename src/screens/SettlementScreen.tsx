@@ -1,6 +1,6 @@
 import { LogPanel } from '../components/LogPanel';
 import { SceneHeader } from '../components/SceneHeader';
-import { getLocationContent } from '../data/locationContent';
+import { getLocationContent, hasLocalActions } from '../data/locationContent';
 import type { UiApi } from '../engine/ui-api';
 
 export type SettlementTab = 'locations' | 'households' | 'businesses' | 'log';
@@ -33,6 +33,11 @@ export function SettlementScreen({
   const households = uiApi.listHouseholds();
   const companies = uiApi.listCompanies();
   const calendar = uiApi.getCalendar();
+  // A site an open business works, with nothing else to do there, is that
+  // business — it's on the Businesses tab, not listed twice. Shared ground
+  // (the forest, where anyone can chop wood) and empty land stay listed.
+  const workedSites = new Set(companies.filter((c) => c.closedAtTick === null).map((c) => c.siteId));
+  const places = sites.filter((site) => !workedSites.has(site.id) || hasLocalActions(site.kind));
 
   return (
     <section>
@@ -67,7 +72,7 @@ export function SettlementScreen({
 
       {tab === 'locations' && (
         <div className="location-grid">
-          {sites.map((site) => {
+          {places.map((site) => {
             const content = getLocationContent(site.kind);
             return (
               <button

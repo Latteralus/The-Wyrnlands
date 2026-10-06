@@ -81,11 +81,15 @@ describe('applyCompanyDailyCadence', () => {
     engine.dispose();
   });
 
-  it('a poorly-managed company restocks inputs less often than a well-managed one', async () => {
+  it('a poorly-managed company keeps only a day of input in hand; a well-managed one plans ahead', async () => {
     const sloppy = await millWithOwner('decisions-restock-sloppy', 0);
-    // Day 1: level-0 management restocks only every 5 days.
+    // Day 1 isn't a level-0 owner's restocking day (every 5 days) — but
+    // nobody leaves hands idle: it buys one day's work for its one miller.
     applyCompanyDailyCadence(sloppy.db, sloppy.bus, 1 * MINUTES_PER_DAY);
-    expect(countActiveItemsOfType(sloppy.db, 'mill-co', 'grain')).toBe(0);
+    expect(countActiveItemsOfType(sloppy.db, 'mill-co', 'grain')).toBe(25);
+    // With that in hand, the next day it buys nothing more.
+    applyCompanyDailyCadence(sloppy.db, sloppy.bus, 2 * MINUTES_PER_DAY);
+    expect(countActiveItemsOfType(sloppy.db, 'mill-co', 'grain')).toBe(25);
 
     const eager = await millWithOwner('decisions-restock-eager', 1100); // level 5
     applyCompanyDailyCadence(eager.db, eager.bus, 1 * MINUTES_PER_DAY);
@@ -227,6 +231,9 @@ describe('applyCompanyDailyCadence', () => {
 
   it("pays the owner's household a share of recent profit, keeping a cash reserve (§9.3)", async () => {
     const engine = await millWithOwner('decisions-draw', 650);
+    // A day's grain already in hand, so no input purchase muddies the books.
+    for (let i = 0; i < 25; i++)
+      engine.produceItem({ id: `grain-${i}`, type: 'grain', containerId: 'mill-co' });
     engine.createHousehold({ id: 'owner-house', name: 'Owner House', homeSiteId: 'market' });
     engine.addHouseholdMember('owner-house', 'owner-1');
     const day = 35;

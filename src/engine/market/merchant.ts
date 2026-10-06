@@ -140,5 +140,13 @@ function exportGlut(
       'export',
     );
     recordLedgerEntry(db, consignorId, tick, 'revenue', amount, `Exported ${count} ${listing.goodType}.`);
+    bus.emit({
+      tick,
+      scope: 'business',
+      actorId: consignorId,
+      type: 'business.exported',
+      message: `Sells ${count} surplus ${listing.goodType} to a travelling merchant for export: ${unitPrice} coin each, ${amount} coin in all.`,
+      data: { goodType: listing.goodType, units: count, price: unitPrice },
+    });
   }
 }

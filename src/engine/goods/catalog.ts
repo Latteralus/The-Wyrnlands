@@ -52,12 +52,26 @@ const GOODS: Record<string, GoodDefinition> = {
     category: 'food',
     weightKg: 0.5,
     basePrice: 12,
-    hungerRestored: 45,
+    // A loaf is a day's bread: the same loaf a household member eats each day
+    // (population/provisions.ts) fills the player, too (pillar 2). At 45 the
+    // player needed ~2.7 loaves a day to their workmates' one — more than a
+    // farmhand's wage could ever buy.
+    hungerRestored: 100,
     shelfLifeDays: 6,
     marketReferenceStock: 80,
     merchantImports: true,
   },
-  water: { type: 'water', category: 'drink', weightKg: 1, basePrice: 0, thirstRestored: 55 },
+  // A pail drawn at the well, carried home and drunk from — a long drink
+  // that quenches thirst fully (population/provisions.ts). Free but for the
+  // walk; goes stale left standing a fortnight.
+  water: {
+    type: 'water',
+    category: 'drink',
+    weightKg: 1,
+    basePrice: 0,
+    thirstRestored: 100,
+    shelfLifeDays: 14,
+  },
   firewood: {
     type: 'firewood',
     category: 'material',

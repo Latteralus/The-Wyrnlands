@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDatabase } from '../db/sqlite';
+import { createDatabase, queryRows } from '../db/sqlite';
 import { loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { findFirstActiveItem } from '../inventory/items';
@@ -79,9 +79,14 @@ describe('Stage 3 — First Job scenarios', () => {
     expect(engine.getBalance('oster_farm')).toBe(companyBalanceBefore - wage);
     expect(engine.getSkillXp(PLAYER_ID, 'farming')).toBeGreaterThan(xpBefore);
 
-    const grainProduced = engine
-      .queryLog('personal', 20)
-      .filter((e) => e.type === 'item.produced' && (e.data?.type as string | undefined) === 'grain');
+    // Item-by-item history lives in provenance_events (the log keeps the
+    // shift's own line).
+    const grainProduced = queryRows(
+      engine.db,
+      `SELECT provenance_events.item_id FROM provenance_events JOIN items ON items.id = provenance_events.item_id
+       WHERE provenance_events.event_type = 'produced' AND provenance_events.actor_id = ? AND items.type = 'grain'`,
+      [PLAYER_ID],
+    );
     expect(grainProduced.length).toBeGreaterThan(0);
 
     const hoe = findFirstActiveItem(engine.db, 'oster_farm', 'hoe');

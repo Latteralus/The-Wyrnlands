@@ -1,5 +1,6 @@
 import { cancelQueuedActions, enqueueAction, interruptCurrentAction } from '../actions/actionQueue';
 import { queryRow } from '../db/sqlite';
+import { getEntityName, isYou } from '../entities';
 import type { ActionRegistry } from '../actions/registry';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
@@ -24,6 +25,13 @@ const DECAY_PER_TICK: Record<NeedKey, number> = {
   thirst: 100 / 600, // ~10h to empty — fastest, as §6 specifies
   energy: 100 / 1080, // ~18h awake to empty
   warmth: 100 / 480, // ~8h exposed to empty
+};
+
+const COLLAPSE_CAUSE: Record<NeedKey, string> = {
+  hunger: 'hunger',
+  thirst: 'thirst',
+  energy: 'exhaustion',
+  warmth: 'the cold',
 };
 
 const COLLAPSE_RECOVERY_ACTION = 'collapse_recovery';
@@ -79,6 +87,8 @@ export function restoreNeed(
     type: 'need.restored',
     message: note ?? `${entityId}'s ${need} improved.`,
     data: { need, amount, value: next },
+    // The needs bars show it; the action that restored it has its own line.
+    detail: true,
   });
 }
 
@@ -97,7 +107,9 @@ function triggerCollapse(
     scope: 'personal',
     actorId: entityId,
     type: 'need.collapsed',
-    message: `${entityId} collapses from ${need} and is cared for until able to stand again.`,
+    message: isYou(db, entityId)
+      ? `You collapse from ${COLLAPSE_CAUSE[need]} and are carried somewhere to recover.`
+      : `${getEntityName(db, entityId)} collapses from ${COLLAPSE_CAUSE[need]} and is cared for until able to stand.`,
     data: { need },
   });
   enqueueAction(db, registry, entityId, COLLAPSE_RECOVERY_ACTION, tick);
@@ -127,22 +139,27 @@ export function tickNeeds(
   const row = queryRow(
     db,
     `SELECT ${NEEDS_COLUMNS},
-       EXISTS(
-         SELECT 1 FROM actions
-         WHERE actor_id = needs.entity_id AND status = 'in_progress' AND type = ?
-       ) AS in_recovery
+       (SELECT type FROM actions
+        WHERE actor_id = needs.entity_id AND status = 'in_progress' LIMIT 1) AS current_action
      FROM needs WHERE entity_id = ?`,
-    [COLLAPSE_RECOVERY_ACTION, entityId],
+    [entityId],
   );
   if (!row) return;
   const needs = rowToNeeds(row);
-  if (Number(row[6]) === 1) return;
+  const currentAction = typeof row[6] === 'string' ? row[6] : null;
+  if (currentAction === COLLAPSE_RECOVERY_ACTION) return;
+  const restoring =
+    currentAction && registry.has(currentAction) ? registry.get(currentAction).restoresPerTick : undefined;
+  const change = (key: NeedKey, decay: number) => {
+    const restore = restoring?.[key];
+    return clamp(needs[key] + (restore !== undefined ? restore : -decay));
+  };
 
   const next: Record<NeedKey, number> = {
-    hunger: clamp(needs.hunger - DECAY_PER_TICK.hunger),
-    thirst: clamp(needs.thirst - DECAY_PER_TICK.thirst),
-    energy: clamp(needs.energy - DECAY_PER_TICK.energy),
-    warmth: context.exposedToCold ? clamp(needs.warmth - DECAY_PER_TICK.warmth) : clamp(needs.warmth + 1),
+    hunger: change('hunger', DECAY_PER_TICK.hunger),
+    thirst: change('thirst', DECAY_PER_TICK.thirst),
+    energy: change('energy', DECAY_PER_TICK.energy),
+    warmth: context.exposedToCold ? change('warmth', DECAY_PER_TICK.warmth) : clamp(needs.warmth + 1),
   };
 
   db.run(

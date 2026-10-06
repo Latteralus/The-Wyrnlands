@@ -38,6 +38,7 @@ import {
   type Household,
 } from './households';
 import { FIRST_NAMES, SURNAMES, pick } from './npcGen';
+import { provisionHousehold } from './provisions';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
 
@@ -111,11 +112,11 @@ function directAdjustNeed(db: Database, entityId: string, need: NeedKey, delta: 
   db.run(`UPDATE needs SET ${need} = ? WHERE entity_id = ?`, [clamp(needs[need] + delta), entityId]);
 }
 
-// Feeds every member of a household for one day: consumes existing bread
-// stock first, then buys the shortfall from the market if the household can
-// afford it. Returns how many members were properly fed (the caller decides
-// whether the adaptation ladder's "went hungry" rung fires — §10's "cheaper
-// food → smaller meals" — and tracks sustained hunger for migration).
+// A household's day of food and drink (population/provisions.ts): fetch
+// water and stock up on bread toward a supply of several days, then drink
+// and eat from that store. Members who ate are well fed; the rest scrape by
+// on the commons (§8.2's floor) — the adaptation ladder (the caller) reacts
+// to anyone going without, and the hunger tally feeds migration (§11.4).
 function feedHousehold(
   db: Database,
   bus: EventBus,
@@ -123,54 +124,12 @@ function feedHousehold(
   members: string[],
   tick: number,
 ): number {
-  // Water is free and effectively unlimited at the well (§6/§8.2) — no
-  // scarcity axis worth modeling for background NPCs; food is the real
-  // budget line.
-  for (const entityId of members) directSetNeed(db, entityId, 'thirst', 100);
-
-  let fedCount = 0;
-  while (fedCount < members.length) {
-    const bread = findFirstActiveItem(db, household.id, 'bread');
-    if (!bread) break;
-    destroyItem(db, bus, bread.id, 'consumed', tick, { note: `${household.name} eats.`, scope: 'business' });
-    fedCount++;
-  }
-
-  if (fedCount < members.length) {
-    const listing = getListing(db, MARKET_SITE_ID, 'bread');
-    const price = listing?.price ?? getGoodDefinition('bread').basePrice;
-    const affordableByCoin = price > 0 ? Math.floor(getBalance(db, household.id) / price) : Infinity;
-    const buyCount = Math.max(
-      0,
-      Math.min(members.length - fedCount, listing?.quantity ?? 0, affordableByCoin),
-    );
-
-    // §Stage 5 closed economy: the real loaves the bakery consigned to the
-    // market are bought first (paying the bakery for exactly those), and
-    // only any shortfall is the §8.1 merchant-faucet import — see
-    // market.ts's buyFromMarket. This is the dominant bread-buying path in
-    // the game (up to one purchase per household per day vs. the player's
-    // occasional one), so closing it is what actually closes the loop.
-    if (buyCount > 0) {
-      const purchase = buyFromMarket(db, bus, household.id, MARKET_SITE_ID, 'bread', buyCount, tick, {
-        note: `${household.name} buys bread at the market.`,
-        scope: 'business',
-      });
-      for (const itemId of purchase.itemIds) {
-        destroyItem(db, bus, itemId, 'consumed', tick, {
-          note: `${household.name} eats.`,
-          scope: 'business',
-        });
-        fedCount++;
-      }
-    }
-  }
-
+  const { fed, watered } = provisionHousehold(db, bus, household, members.length, tick);
   members.forEach((entityId, i) => {
-    directSetNeed(db, entityId, 'hunger', i < fedCount ? WELL_FED_HUNGER : SUBSISTENCE_HUNGER);
+    directSetNeed(db, entityId, 'thirst', watered ? 100 : 50);
+    directSetNeed(db, entityId, 'hunger', i < fed ? WELL_FED_HUNGER : SUBSISTENCE_HUNGER);
   });
-
-  return fedCount;
+  return fed;
 }
 
 // §10's budget order is "food → housing → fuel → ...": after eating, a
@@ -439,6 +398,8 @@ export function applyNpcLaborDailyCadence(
   rng: () => number,
 ): void {
   if (!isWorkday(tick)) return;
+  // One line per business for the day's work in its log, not one per hand.
+  const day = new Map<string, { name: string; hands: number; wages: number; made: Map<string, number> }>();
   for (const jobSlot of listJobOpenings(db)) {
     for (const employment of listActiveEmploymentsForSlot(db, jobSlot.id)) {
       const householdId = getHouseholdIdForMember(db, employment.entityId);
@@ -458,7 +419,11 @@ export function applyNpcLaborDailyCadence(
         continue;
       }
 
+      const summary = day.get(company.id) ?? { name: company.name, hands: 0, wages: 0, made: new Map() };
+      day.set(company.id, summary);
+      summary.hands++;
       const wage = Math.max(0, Math.min(employment.wage, getBalance(db, company.id)));
+      summary.wages += wage;
       if (wage > 0) {
         transferCoin(
           db,
@@ -476,7 +441,7 @@ export function applyNpcLaborDailyCadence(
       const succeeded = rng() < getSuccessChance(db, employment.entityId, jobSlot.skill);
       const recipe = getRecipeForSkill(jobSlot.skill);
       if (recipe) {
-        runProductionShift(db, bus, {
+        const made = runProductionShift(db, bus, {
           companyId: company.id,
           companyName: company.name,
           workerId: employment.entityId,
@@ -486,12 +451,24 @@ export function applyNpcLaborDailyCadence(
           tick,
           scope: 'business',
         });
+        summary.made.set(recipe.outputGood, (summary.made.get(recipe.outputGood) ?? 0) + made);
       }
       if (jobSlot.toolGoodType) {
         wearCompanyTool(db, bus, company.id, jobSlot.toolGoodType, TOOL_WEAR_PER_SHIFT, tick);
       }
       addXp(db, employment.entityId, jobSlot.skill, SHIFT_XP);
     }
+  }
+  for (const [companyId, summary] of day) {
+    const made = [...summary.made].map(([good, n]) => `${n} ${good}`).join(', ') || 'nothing';
+    bus.emit({
+      tick,
+      scope: 'business',
+      actorId: companyId,
+      type: 'business.workday',
+      message: `${summary.hands} ${summary.hands === 1 ? 'hand works' : 'hands work'} a shift, turning out ${made}; ${summary.wages} coin paid in wages.`,
+      data: { hands: summary.hands, wages: summary.wages, made: Object.fromEntries(summary.made) },
+    });
   }
 }
 

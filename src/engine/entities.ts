@@ -18,3 +18,9 @@ export function getEntity(db: Database, id: string): Entity | null {
 export function getEntityName(db: Database, id: string): string {
   return getEntity(db, id)?.name ?? id;
 }
+
+// The player's entity is named "You" — narration about them reads in the
+// second person ("You collapse…") rather than as a name ("You collapses…").
+export function isYou(db: Database, id: string): boolean {
+  return getEntityName(db, id) === 'You';
+}

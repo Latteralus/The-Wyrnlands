@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkpointEngine } from '../checkpoint';
-import { createDatabase } from '../db/sqlite';
+import { createDatabase, queryRows } from '../db/sqlite';
 import { loadFreshSqlJs, loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { findFirstActiveItem } from '../inventory/items';
@@ -131,10 +131,13 @@ describe('Stage 5 — the closed grain -> flour -> bread chain, with real compan
     // A real bought loaf still carries its full produced -> sold ->
     // consumed provenance chain, the same standard every other stage
     // holds consumption to (§Stage 2/3/4).
-    const soldBreadEvents = engine
-      .queryLog('business', 10_000)
-      .filter((e) => e.type === 'item.transferred' && (e.data?.to as string | undefined) === 'market-stock');
-    expect(soldBreadEvents.length).toBeGreaterThan(0);
+    const soldBread = queryRows(
+      engine.db,
+      `SELECT provenance_events.item_id FROM provenance_events JOIN items ON items.id = provenance_events.item_id
+       WHERE provenance_events.event_type = 'transferred' AND provenance_events.to_container_id = 'market-stock'
+         AND items.type = 'bread' LIMIT 1`,
+    );
+    expect(soldBread.length).toBeGreaterThan(0);
 
     // §Stage 5 slice 2: NPC job-seeking (population/cadence.ts) genuinely
     // fills newly-opened job slots over time, not just at world generation —

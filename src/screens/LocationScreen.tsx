@@ -21,12 +21,6 @@ function marketGoodType(actionType: string): string | null {
   return null;
 }
 
-// work_shift_<jobSlotId> actions (jobs/shifts.ts) — same "parse the action
-// type for a display hint" precedent as marketGoodType above.
-function workShiftJobSlotId(actionType: string): string | null {
-  return actionType.startsWith('work_shift_') ? actionType.slice('work_shift_'.length) : null;
-}
-
 // §5.5 Location panels: "illustration, atmospheric description (conditional
 // on season/scarcity/time), presence roster, available actions." §Stage 4
 // gives the presence roster real NPCs (§Stage4's hourly presence lookup —
@@ -43,20 +37,8 @@ export function LocationScreen({
   const calendar = uiApi.getCalendar();
   const content = getLocationContent(site.kind);
   const listings = uiApi.listMarketListings(site.id);
-  const employment = uiApi.getEmployment(playerId);
   const present = uiApi.listPresentEntities(site.id);
   const holder = site.landValue ? uiApi.getSiteHolder(site.id) : null;
-  // A site kind's content lists the shift action of the business seeded
-  // there (data/locationContent.ts); only offer it where that business
-  // actually works — not at every parcel of the same kind (a vacant field
-  // isn't Oster Farm), and not once it has closed.
-  const openings = uiApi.listJobOpenings();
-  const actions = content.actions.filter((action) => {
-    const jobSlotId = workShiftJobSlotId(action.type);
-    if (jobSlotId === null) return true;
-    const slot = openings.find((s) => s.id === jobSlotId);
-    return slot !== undefined && uiApi.getCompany(slot.companyId)?.siteId === site.id;
-  });
 
   const handleAction = (type: string) => {
     uiApi.queueAction(playerId, type);
@@ -101,21 +83,13 @@ export function LocationScreen({
 
       <h3>What you can do</h3>
       <div className="location-actions">
-        {actions.map((action) => {
+        {content.actions.map((action) => {
           const good = marketGoodType(action.type);
           const listing = good ? listings.find((l) => l.goodType === good) : undefined;
-          const jobSlotId = workShiftJobSlotId(action.type);
-          const jobHint =
-            jobSlotId === null
-              ? null
-              : employment && employment.jobSlotId === jobSlotId
-                ? ` (wage ${employment.wage} coin/shift)`
-                : ` (you don't work here)`;
           return (
             <button key={action.type} type="button" onClick={() => handleAction(action.type)}>
               {action.label}
               {listing && ` (${listing.price} coin, ${listing.quantity} in stock)`}
-              {jobHint}
             </button>
           );
         })}

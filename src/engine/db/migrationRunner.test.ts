@@ -29,6 +29,7 @@ describe('applyMigrations', () => {
       '0018_market_consignments',
       '0019_economy_balance',
       '0020_business_founding',
+      '0021_autonomous_routines',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -38,6 +39,7 @@ describe('applyMigrations', () => {
     expect(tableNames).toEqual(
       expect.arrayContaining([
         'actions',
+        'autonomous_actors',
         'audits',
         'companies',
         'company_foundings',

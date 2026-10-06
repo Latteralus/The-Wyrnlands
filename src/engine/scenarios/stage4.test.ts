@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { checkpointEngine } from '../checkpoint';
-import { createDatabase } from '../db/sqlite';
+import { createDatabase, queryRows } from '../db/sqlite';
 import { loadFreshSqlJs, loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { findFirstActiveItem } from '../inventory/items';
@@ -207,14 +207,13 @@ describe('Stage 4 — Living NPCs & Households scenarios', () => {
     // (§Stage 2/3) — produced → consumed for a merchant import, or produced
     // → transferred (bakery to market) → transferred (market to household)
     // → consumed for a real local loaf.
-    const consumedBreadEvents = engine
-      .queryLog('business', 5000)
-      .filter((e) => e.type === 'item.consumed' && (e.data?.type as string | undefined) === 'bread');
-    expect(consumedBreadEvents.length).toBeGreaterThan(0);
-    for (const event of consumedBreadEvents.slice(0, 10)) {
-      const itemId = event.data?.itemId as string | undefined;
-      expect(itemId).toBeTruthy();
-      const types = engine.getProvenanceChain(itemId!).map((e) => e.eventType);
+    const consumedBread = queryRows(
+      engine.db,
+      "SELECT id FROM items WHERE type = 'bread' AND status = 'consumed' ORDER BY rowid LIMIT 10",
+    ).map((row) => String(row[0]));
+    expect(consumedBread.length).toBeGreaterThan(0);
+    for (const itemId of consumedBread) {
+      const types = engine.getProvenanceChain(itemId).map((e) => e.eventType);
       expect(types[0]).toBe('produced');
       expect(types[types.length - 1]).toBe('consumed');
       expect(types.slice(1, -1).every((t) => t === 'transferred')).toBe(true);

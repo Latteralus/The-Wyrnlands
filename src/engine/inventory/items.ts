@@ -155,6 +155,8 @@ export function produceItem(db: Database, bus: EventBus, params: ProduceItemPara
         type: 'item.produced',
         message: params.note ?? `Produced ${params.type}.`,
         data: { itemId: params.id, type: params.type },
+        // Item-by-item history lives in provenance_events.
+        detail: true,
       },
       { actorId: params.actorId },
     ),
@@ -191,6 +193,7 @@ export function transferItem(
         type: 'item.transferred',
         message: options.note ?? `Moved ${item.type} to ${toContainerId}.`,
         data: { itemId, from: item.containerId, to: toContainerId },
+        detail: true,
       },
       { actorId: options.actorId },
     ),
@@ -227,6 +230,9 @@ export function destroyItem(
         type: `item.${reason}`,
         message: options.note ?? `${item.type} was ${reason}.`,
         data: { itemId, type: item.type },
+        // Something wearing out is news (your shoes give out); eating,
+        // spoilage and export are bookkeeping, kept in provenance_events.
+        detail: reason !== 'worn_out',
       },
       { actorId: options.actorId },
     ),

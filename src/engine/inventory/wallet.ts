@@ -1,4 +1,5 @@
 import { queryRow } from '../db/sqlite';
+import { MINUTES_PER_DAY } from '../time/clock';
 import { incrementCoinFaucetTotal, incrementCoinSinkTotal } from './counters';
 import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
@@ -38,6 +39,7 @@ export function faucetCoin(
   ensureWallet(db, ownerId);
   db.run('UPDATE wallets SET balance = balance + ? WHERE owner_id = ?', [amount, ownerId]);
   incrementCoinFaucetTotal(db, amount);
+  recordCoinFlow(db, tick, 'faucet', channel, amount);
   bus.emit({
     tick,
     scope,
@@ -45,6 +47,7 @@ export function faucetCoin(
     type: 'coin.faucet',
     message: note ?? `${ownerId} received ${amount} coin from outside the economy.`,
     data: channel ? { amount, channel } : { amount },
+    detail: true,
   });
 }
 
@@ -71,6 +74,7 @@ export function sinkCoin(
 
   db.run('UPDATE wallets SET balance = balance - ? WHERE owner_id = ?', [amount, ownerId]);
   incrementCoinSinkTotal(db, amount);
+  recordCoinFlow(db, tick, 'sink', channel, amount);
   bus.emit({
     tick,
     scope,
@@ -78,6 +82,7 @@ export function sinkCoin(
     type: 'coin.sink',
     message: note ?? `${ownerId} paid ${amount} coin out of the economy.`,
     data: channel ? { amount, channel } : { amount },
+    detail: true,
   });
 }
 
@@ -110,5 +115,25 @@ export function transferCoin(
     type: 'coin.transferred',
     message: note ?? `${fromOwnerId} paid ${toOwnerId} ${amount} coin.`,
     data: { amount, from: fromOwnerId, to: toOwnerId },
+    // Wallets and company ledgers hold the money's history; whatever the
+    // payment was for (a wage, a sale, a draw) has its own line where it
+    // matters.
+    detail: true,
   });
+}
+
+// Coin entering or leaving the economy, totalled per day and channel (§8.1
+// rule 2; the economy report reads it — reports/economySnapshot.ts).
+function recordCoinFlow(
+  db: Database,
+  tick: number,
+  kind: 'faucet' | 'sink',
+  channel: string | undefined,
+  amount: number,
+): void {
+  db.run(
+    `INSERT INTO coin_flows (day, kind, channel, amount) VALUES (?, ?, ?, ?)
+     ON CONFLICT (day, kind, channel) DO UPDATE SET amount = amount + excluded.amount`,
+    [Math.floor(tick / MINUTES_PER_DAY), kind, channel ?? 'other', amount],
+  );
 }

@@ -217,15 +217,13 @@ export function collectEconomySnapshot(
     ),
     faucetsInWindow: countByType(
       db,
-      `SELECT COALESCE(json_extract(data, '$.channel'), 'other'), SUM(json_extract(data, '$.amount'))
-       FROM event_log WHERE type = 'coin.faucet' AND tick > ? GROUP BY 1 ORDER BY 1`,
-      [windowStart],
+      "SELECT channel, SUM(amount) FROM coin_flows WHERE kind = 'faucet' AND day >= ? GROUP BY 1 ORDER BY 1",
+      [Math.floor(windowStart / minutesPerDay)],
     ),
     sinksInWindow: countByType(
       db,
-      `SELECT COALESCE(json_extract(data, '$.channel'), 'other'), SUM(json_extract(data, '$.amount'))
-       FROM event_log WHERE type = 'coin.sink' AND tick > ? GROUP BY 1 ORDER BY 1`,
-      [windowStart],
+      "SELECT channel, SUM(amount) FROM coin_flows WHERE kind = 'sink' AND day >= ? GROUP BY 1 ORDER BY 1",
+      [Math.floor(windowStart / minutesPerDay)],
     ),
     ownerDrawsInWindow: Number(
       queryRow(

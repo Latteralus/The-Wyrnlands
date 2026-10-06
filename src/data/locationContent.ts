@@ -23,6 +23,7 @@ const DEFAULT_CONTENT: LocationContent = {
 // free bottom rung; eating doesn't require a location either).
 const UNIVERSAL_ACTIONS: LocationAction[] = [
   { type: 'eat', label: 'Eat (from your pack)' },
+  { type: 'drink', label: 'Drink (from your pack)' },
   { type: 'rest_rough', label: 'Rest here (rough)' },
 ];
 
@@ -30,7 +31,10 @@ const LOCATION_CONTENT: Record<string, Omit<LocationContent, 'actions'> & { acti
   well: {
     icon: '💧',
     description: 'A stone well ringed with mossy cobbles; the bucket-rope creaks in the wind.',
-    actions: [{ type: 'draw_water', label: 'Draw water' }],
+    actions: [
+      { type: 'draw_water', label: 'Drink at the well' },
+      { type: 'fetch_water', label: 'Fill pails to carry with you' },
+    ],
   },
   tavern: {
     icon: '🍺',
@@ -42,38 +46,41 @@ const LOCATION_CONTENT: Record<string, Omit<LocationContent, 'actions'> & { acti
     description: 'A weathered board nailed to a post, pinned with notices old and new.',
     actions: [{ type: 'read_notices', label: 'Read the notices' }],
   },
-  // §Stage 4: the logging camp's work_shift action lives here too — it
-  // works out of this same forest site rather than a separate location.
   forest: {
     icon: '🌲',
     description: 'The tree line presses close, dense with timber and shadow.',
-    actions: [
-      { type: 'chop_wood', label: 'Chop wood' },
-      { type: 'work_shift_hollows_edge_logging_woodcutter', label: 'Work a shift (logging camp)' },
-    ],
+    actions: [{ type: 'chop_wood', label: 'Chop wood' }],
   },
   market: {
     icon: '🧺',
     description: 'A stall of baskets and bolts, the seller calling prices over the crowd.',
     actions: [
       { type: 'buy_bread', label: 'Buy bread' },
+      { type: 'stock_up_bread', label: "Stock up on bread (a few days' worth)" },
       { type: 'buy_shoes', label: 'Buy shoes' },
       { type: 'buy_cloak', label: 'Buy a cloak' },
       { type: 'sell_firewood', label: 'Sell firewood' },
     ],
   },
-  // §Stage 3: the action type is tied to the specific job slot the demo
-  // world seeds (oster_farm_farmhand) — same precedent as market's
-  // buy_<good>/sell_<good> actions being tied to the specific seeded stall.
+  // Work isn't a button here: a character with a job works their shifts as
+  // part of their daily routine (seed/demoWorld.ts's playerRoutine), and
+  // applying happens on the business's own screen.
   farm: {
     icon: '🌾',
     description:
       'Rows of tilled earth stretch toward the tree line; the farmhouse smoke curls into a grey sky.',
-    actions: [{ type: 'work_shift_oster_farm_farmhand', label: 'Work a shift' }],
+    actions: [],
   },
 };
 
 export function getLocationContent(kind: string): LocationContent {
   const base = LOCATION_CONTENT[kind] ?? DEFAULT_CONTENT;
   return { ...base, actions: [...base.actions, ...UNIVERSAL_ACTIONS] };
+}
+
+// Whether a kind of place offers anything to do there beyond eating and
+// resting (which work anywhere). A place that's just a business's premises
+// is reached through the Businesses tab instead of being listed twice.
+export function hasLocalActions(kind: string): boolean {
+  return (LOCATION_CONTENT[kind]?.actions.length ?? 0) > 0;
 }

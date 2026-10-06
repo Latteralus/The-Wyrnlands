@@ -182,11 +182,15 @@ describe('Stage 2 — Survival Loop scenarios', () => {
     expect(engine.getItem(latestReplacementShoesId!)).not.toBeNull();
 
     // Consumption is traceable end to end: every eaten loaf has a full
-    // produced → consumed provenance chain.
+    // produced → transferred* → consumed provenance chain (a merchant import
+    // is produced straight into the buyer's hands; a loaf the bakery baked
+    // passes through the stall first).
     expect(eatenItemIds.length).toBeGreaterThan(0);
     for (const itemId of eatenItemIds) {
-      const chain = engine.getProvenanceChain(itemId);
-      expect(chain.map((e) => e.eventType)).toEqual(['produced', 'consumed']);
+      const chain = engine.getProvenanceChain(itemId).map((e) => e.eventType);
+      expect(chain[0]).toBe('produced');
+      expect(chain[chain.length - 1]).toBe('consumed');
+      expect(chain.slice(1, -1).every((t) => t === 'transferred')).toBe(true);
     }
 
     // Conservation held throughout — no drift, no silent bugs.

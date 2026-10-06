@@ -274,11 +274,18 @@ export function applyForJob(
     scope: 'business',
     actorId: jobSlot.companyId,
     type: 'job.filled',
-    message: `${jobSlot.companyName} hires a new ${jobSlot.title} at ${wage} coin a shift.`,
+    message: `${jobSlot.companyName} hires ${hireName(db, entityId)} as ${/^[aeiou]/i.test(jobSlot.title) ? 'an' : 'a'} ${jobSlot.title} at ${wage} coin a shift.`,
     data: { entityId, jobSlotId, wage },
   });
 
   return { wage, haggleAttempted: options.haggle, haggleSucceeded, message };
+}
+
+// Who a business log names as its new hire — the player's entity is called
+// "You", which reads as "you" mid-sentence.
+function hireName(db: Database, entityId: string): string {
+  const name = getEntityName(db, entityId);
+  return name === 'You' ? 'you' : name;
 }
 
 export interface QuitJobOptions {

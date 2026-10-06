@@ -54,7 +54,9 @@ describe('action queue', () => {
     const personalLog = engine.queryLog('personal', 20);
     expect(personalLog.filter((e) => e.type === 'action.completed')).toHaveLength(2);
     expect(personalLog.filter((e) => e.type === 'action.failed')).toHaveLength(1);
-    expect(personalLog.filter((e) => e.type === 'action.started')).toHaveLength(3);
+    // Starting an action is bookkeeping unless its definition describes it
+    // (startMessage) — the completion lines tell the story.
+    expect(personalLog.filter((e) => e.type === 'action.started')).toHaveLength(0);
 
     engine.dispose();
   });

@@ -22,6 +22,7 @@ import {
   companyBuyFromMarket,
   getListing,
   marketStockContainerId,
+  seedListing,
   sellSurplusToMarket,
 } from '../market/market';
 import { WORKDAYS_PER_WEEK, weeklyFoodCost } from '../population/cadence';
@@ -44,6 +45,7 @@ import {
   type Company,
 } from './companies';
 import { getFoundingRecord } from './founding';
+import { buyFromLocalSuppliers, tradePrice } from './trade';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
 
@@ -177,6 +179,21 @@ function unsoldOutput(db: Database, companyId: string, goodType: string): number
   return own + consigned;
 }
 
+// The floor under all of that, whatever the Management: nobody hires hands
+// and then gives them nothing to work. Any day the business doesn't hold a
+// day's input for its current workers, it tops up to that much — even on
+// a day its owner's restocking habit wouldn't otherwise bring them to the
+// stall. (Before 2026-10-06 a Management-0 bakery opened with two bakers and
+// no flour, and bought none until its fifth-day restock.) The skilled
+// judgements still apply on top: a demand-aware owner deliberately idles
+// while its own goods sit unsold, a margin-aware one won't buy at a loss.
+//
+// Where it buys: straight from local producers first (companies/trade.ts —
+// cheaper, and the producer is glad of the sale), then the market stall.
+// If the input has never been sold here at all, the business puts in an
+// order with the merchant (an empty listing the merchant then stocks,
+// market/merchant.ts) rather than waiting forever for a stall that
+// doesn't exist.
 function restockInputs(
   db: Database,
   bus: EventBus,
@@ -189,6 +206,11 @@ function restockInputs(
   if (!recipe.inputGood) return;
   const workers = countActiveEmploymentsForSlot(db, slot.id);
   if (workers === 0) return;
+  const onHand = countActiveItemsOfType(db, company.id, recipe.inputGood);
+  const dayOfWork = Math.ceil(inputPerShift(recipe) * workers);
+  const habitualRestockDay = (tick / MINUTES_PER_DAY) % restockIntervalDays(managementLevel) === 0;
+  if (!habitualRestockDay && onHand >= dayOfWork) return;
+
   const capacityDailyInput = (inputPerShift(recipe) * workers * WORKDAYS_PER_WEEK) / 7;
   let dailyInput = capacityDailyInput;
   if (
@@ -209,28 +231,41 @@ function restockInputs(
   }
   if (managementLevel >= DEMAND_AWARE_LEVEL && isGlutted(db, company.id, recipe.outputGood)) return;
 
-  const listing = getListing(db, MARKET_SITE_ID, recipe.inputGood);
-  if (!listing || listing.quantity <= 0) return;
+  const inputDef = getGoodDefinition(recipe.inputGood);
+  if (!getListing(db, MARKET_SITE_ID, recipe.inputGood) && inputDef.merchantImports) {
+    seedListing(db, MARKET_SITE_ID, recipe.inputGood, Math.ceil(inputDef.basePrice * MERCHANT_ASK_FACTOR), 0);
+  }
+  const price = tradePrice(db, recipe.inputGood);
   if (managementLevel >= MARGIN_AWARE_LEVEL) {
     const outputPrice =
       getListing(db, MARKET_SITE_ID, recipe.outputGood)?.price ??
       getGoodDefinition(recipe.outputGood).basePrice;
-    if (listing.price * recipe.inputUnits >= outputPrice * recipe.outputUnits) return;
+    if (price * recipe.inputUnits >= outputPrice * recipe.outputUnits) return;
   }
 
-  const target = Math.ceil(dailyInput * (restockIntervalDays(managementLevel) + INPUT_BUFFER_DAYS));
-  let quantity = target - countActiveItemsOfType(db, company.id, recipe.inputGood);
+  const target = habitualRestockDay
+    ? Math.max(dayOfWork, Math.ceil(dailyInput * (restockIntervalDays(managementLevel) + INPUT_BUFFER_DAYS)))
+    : dayOfWork;
+  let quantity = target - onHand;
   if (managementLevel >= CASH_AWARE_LEVEL) {
     // A couple of days' wages kept back, not a week's: input is what
     // generates the revenue that pays wages, and an earlier version that
     // held a full week back starved a cash-poor mill of grain until it
     // closed.
     const spendable = getBalance(db, company.id) - (2 * weeklyWageBill(db, [slot])) / WORKDAYS_PER_WEEK;
-    quantity = Math.min(quantity, Math.floor(spendable / listing.price));
+    quantity = Math.min(quantity, Math.floor(spendable / price));
   }
   if (quantity <= 0) return;
-  companyBuyFromMarket(db, bus, company.id, MARKET_SITE_ID, recipe.inputGood, quantity, tick);
+  const direct = buyFromLocalSuppliers(db, bus, company, recipe.inputGood, quantity, tick);
+  if (quantity - direct > 0) {
+    companyBuyFromMarket(db, bus, company.id, MARKET_SITE_ID, recipe.inputGood, quantity - direct, tick);
+  }
 }
+
+// The merchant's asking price for something he has to fetch (market/
+// merchant.ts imports at no less than 1.5× base) — what an order for a good
+// nobody sells here is opened at.
+const MERCHANT_ASK_FACTOR = 1.5;
 
 // §9.3: a profitable business pays its owner. Weekly, half of the trailing
 // four weeks' operating profit not already drawn is paid to the owner's
@@ -272,6 +307,14 @@ function payOwnerDraw(db: Database, bus: EventBus, company: Company, slots: JobS
     'business',
   );
   recordLedgerEntry(db, company.id, tick, 'owner_draw', draw, 'Owner draw.');
+  bus.emit({
+    tick,
+    scope: 'business',
+    actorId: company.id,
+    type: 'business.owner_draw',
+    message: `Pays its owner, ${getEntityName(db, company.ownerId)}, ${draw} coin from its profits.`,
+    data: { ownerId: company.ownerId, amount: draw },
+  });
 }
 
 // §9.5 "Growth & Upgrades": a profitable, well-managed, fully-staffed
@@ -736,6 +779,11 @@ function recordMilestones(
 export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: number): void {
   const day = tick / MINUTES_PER_DAY;
 
+  // Two passes. First every business decides and buys — so a mill shopping
+  // for grain finds the farm's fresh harvest still in the farm's barn and
+  // can buy it direct (companies/trade.ts). Then every business takes what
+  // it has left to market and settles its week.
+  const operating: { company: Company; slots: JobSlot[] }[] = [];
   for (const company of listCompanies(db)) {
     if (company.closedAtTick !== null) continue; // already closed — nothing left to decide
 
@@ -749,17 +797,22 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
     restockEquipment(db, bus, company, slots, tick);
     tryUpgrade(db, bus, company, slots, managementLevel, tick);
     if (day % 7 === 0) adjustStaffing(db, bus, company, slots, managementLevel, tick);
+    for (const slot of slots) {
+      const recipe = getRecipeForSkill(slot.skill);
+      if (recipe?.inputGood) restockInputs(db, bus, company, slot, recipe, managementLevel, tick);
+    }
+    operating.push({ company, slots });
+  }
 
+  for (const { company, slots } of operating) {
     for (const slot of slots) {
       const recipe = getRecipeForSkill(slot.skill);
       if (!recipe) continue;
-      if (recipe.inputGood && day % restockIntervalDays(managementLevel) === 0) {
-        restockInputs(db, bus, company, slot, recipe, managementLevel, tick);
-      }
-      // Everything made goes to market the same day — the stall (and its
-      // stock-based price, market/pricing.ts) is where demand is discovered.
-      // Unwanted surplus depresses the price, the merchant exports a glut
-      // of exportable goods (market/merchant.ts), and perishables spoil.
+      // Whatever no local business bought goes to market the same day — the
+      // stall (and its stock-based price, market/pricing.ts) is where the
+      // rest of demand is discovered. Unwanted surplus depresses the price,
+      // the merchant exports a glut of exportable goods (market/
+      // merchant.ts), and perishables spoil.
       const surplus = countActiveItemsOfType(db, company.id, recipe.outputGood);
       if (surplus > 0) {
         const price =
@@ -772,7 +825,17 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
     if (day % 7 === 0) {
       // Rent on leased land (world/tenure.ts) — an operating cost.
       const rent = payWeeklyRent(db, bus, company.id, tick);
-      if (rent > 0) recordLedgerEntry(db, company.id, tick, 'rent', rent, 'Weekly rent.');
+      if (rent > 0) {
+        recordLedgerEntry(db, company.id, tick, 'rent', rent, 'Weekly rent.');
+        bus.emit({
+          tick,
+          scope: 'business',
+          actorId: company.id,
+          type: 'business.rent',
+          message: `Pays ${rent} coin rent for its land.`,
+          data: { amount: rent },
+        });
+      }
       payOwnerDraw(db, bus, company, slots, tick);
       recordMilestones(db, bus, company, slots, tick);
       // §9.2: "NPC Management skill grows with tenure like any other skill"

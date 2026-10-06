@@ -7,6 +7,12 @@ export interface EngineEvent {
   message: string;
   actorId?: string;
   data?: Record<string, unknown>;
+  // Bookkeeping, not story: still delivered to every listener (the UI
+  // refreshes on it), but not written to the event log. Per-item movements
+  // (already kept item by item in provenance_events), coin transfers (in
+  // wallets and ledgers), need top-ups (on the needs bars). The log keeps
+  // the moments worth reading — §14.3.
+  detail?: boolean;
 }
 
 type Listener = (event: EngineEvent) => void;

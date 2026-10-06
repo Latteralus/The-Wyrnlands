@@ -48,6 +48,9 @@ function App() {
       const db = createDatabase(SQL);
       const engine = Engine.bootstrap(db, { seed: 'wyrnlands-dev' });
       seedDemoWorld(engine);
+      // You live your day on your own — work your shift, eat, drink, sleep
+      // (seed/demoWorld.ts's playerRoutine); anything you queue runs first.
+      engine.setAutonomous(PLAYER_ID, true);
       if (cancelled) {
         engine.dispose();
         return;
@@ -112,7 +115,13 @@ function App() {
           ) : view.kind === 'npc' ? (
             <NpcProfileScreen uiApi={uiApi} entityId={view.entityId} {...profileProps} />
           ) : view.kind === 'business' ? (
-            <BusinessScreen uiApi={uiApi} companyId={view.companyId} {...profileProps} />
+            <BusinessScreen
+              uiApi={uiApi}
+              companyId={view.companyId}
+              playerId={PLAYER_ID}
+              onAction={bump}
+              {...profileProps}
+            />
           ) : (
             <SettlementScreen
               uiApi={uiApi}

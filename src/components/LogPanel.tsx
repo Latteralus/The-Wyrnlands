@@ -1,3 +1,4 @@
+import { formatTimestamp } from './profileFormat';
 import type { EventScope, UiApi } from '../engine/ui-api';
 
 interface LogPanelProps {
@@ -16,7 +17,7 @@ export function LogPanel({ uiApi, scope, limit = 20, emptyMessage = 'Nothing yet
       {entries.length === 0 && <li className="log-empty">{emptyMessage}</li>}
       {entries.map((event, i) => (
         <li key={i}>
-          <span className="log-tick">[{event.tick}]</span> {event.message}
+          <span className="log-tick">{formatTimestamp(uiApi, event.tick)}</span> {event.message}
         </li>
       ))}
     </ul>

@@ -31,6 +31,12 @@ export function createWorkShiftActionDefinition(
   return {
     type: `work_shift_${jobSlotId}`,
     durationTicks: config.durationTicks,
+    startMessage: (ctx) => {
+      const jobSlot = getJobSlot(ctx.db, jobSlotId);
+      return jobSlot
+        ? `You head to ${jobSlot.companyName} for your shift as ${jobSlot.title.toLowerCase()}.`
+        : 'You head off to work.';
+    },
     resolve: (rng, ctx) => {
       const employment = getActiveEmploymentForSlot(ctx.db, ctx.actorId, jobSlotId);
       if (!employment) {
@@ -50,10 +56,20 @@ export function createWorkShiftActionDefinition(
         };
       }
 
+      // The pay the shift will bring (applyOutcome pays it): the agreed
+      // wage, or whatever the employer can still afford.
+      const pay = Math.max(0, Math.min(employment.wage, getBalance(ctx.db, jobSlot.companyId)));
+      const paid = pay > 0 ? `and are paid ${pay} coin` : `but ${jobSlot.companyName} can't pay you today`;
       const chance = getSuccessChance(ctx.db, ctx.actorId, jobSlot.skill);
       return rng() < chance
-        ? { success: true, message: 'A solid day of work in the fields.' }
-        : { success: false, message: 'The work goes poorly — a wasted stretch of the row.' };
+        ? {
+            success: true,
+            message: `You finish your shift at ${jobSlot.companyName} — solid work — ${paid}.`,
+          }
+        : {
+            success: false,
+            message: `A poor shift at ${jobSlot.companyName}: the work goes badly, half of it wasted. You finish ${paid.replace(/^and are/, 'and are still').replace(/^but/, 'but')}.`,
+          };
     },
     applyOutcome: (ctx, outcome) => {
       if (outcome.data?.reason === 'no_tool') return; // no shift happened — nothing to apply

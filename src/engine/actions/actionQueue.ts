@@ -1,4 +1,5 @@
 import { queryRow, queryRows } from '../db/sqlite';
+import { getEntityName, isYou } from '../entities';
 import { withOptional } from '../optional';
 import type { EventBus } from '../eventBus';
 import type { Rng } from '../rng';
@@ -79,7 +80,13 @@ export function enqueueAction(
   return Number(row?.[0]);
 }
 
-function startAction(db: Database, bus: EventBus, action: QueuedAction, currentTick: number): void {
+function startAction(
+  db: Database,
+  bus: EventBus,
+  registry: ActionRegistry,
+  action: QueuedAction,
+  currentTick: number,
+): void {
   const endsAtTick = currentTick + action.durationTicks;
   db.run('UPDATE actions SET status = ?, started_at_tick = ?, ends_at_tick = ? WHERE id = ?', [
     'in_progress',
@@ -87,12 +94,20 @@ function startAction(db: Database, bus: EventBus, action: QueuedAction, currentT
     endsAtTick,
     action.id,
   ]);
+  const startMessage = registry.get(action.type).startMessage?.({
+    db,
+    bus,
+    actorId: action.actorId,
+    tick: currentTick,
+  });
   bus.emit({
     tick: currentTick,
     scope: 'personal',
     actorId: action.actorId,
     type: 'action.started',
-    message: `${action.actorId} began ${action.type}.`,
+    message: startMessage ?? `${getEntityName(db, action.actorId)} begins ${action.type.replace(/_/g, ' ')}.`,
+    data: { actionType: action.type },
+    detail: startMessage === undefined,
   });
 }
 
@@ -123,7 +138,7 @@ function resolveAction(
         type: outcome.success ? 'action.completed' : 'action.failed',
         message: outcome.message,
       },
-      { data: outcome.data },
+      { data: outcome.data, detail: outcome.quiet },
     ),
   );
   definition.applyOutcome?.(ctx, outcome);
@@ -146,7 +161,7 @@ export function processActorActions(
     if (!action) return;
 
     if (action.status === 'queued') {
-      startAction(db, bus, action, currentTick);
+      startAction(db, bus, registry, action, currentTick);
       continue;
     }
 
@@ -184,8 +199,10 @@ export function cancelQueuedActions(db: Database, bus: EventBus, actorId: string
     scope: 'personal',
     actorId,
     type: 'action.queue_cancelled',
-    message: `${actorId}'s remaining queued actions were cancelled.`,
+    message: `${getEntityName(db, actorId)}'s remaining plans are set aside.`,
     data: { count: queued.length },
+    // Whatever cancelled them (a collapse) has its own line.
+    detail: true,
   });
 }
 
@@ -212,7 +229,9 @@ export function interruptCurrentAction(
     scope: 'personal',
     actorId,
     type: 'action.interrupted',
-    message: `${actorId}'s ${action.type} was interrupted (${Math.round(fraction * 100)}% complete).`,
-    data: { fraction },
+    message: isYou(db, actorId)
+      ? `You break off what you were doing, ${Math.round(fraction * 100)}% done.`
+      : `${getEntityName(db, actorId)} breaks off what they were doing.`,
+    data: { fraction, actionType: action.type },
   });
 }

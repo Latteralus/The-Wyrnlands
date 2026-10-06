@@ -8,6 +8,10 @@ export interface ActionOutcome {
   success: boolean;
   message: string;
   data?: Record<string, unknown>;
+  // The completion line is left out of the log because applyOutcome writes
+  // a fuller one once it knows the result (a purchase: whose stock, at what
+  // price).
+  quiet?: boolean;
 }
 
 // Read/write access resolve()/applyOutcome() get at resolution time — a
@@ -24,6 +28,14 @@ export interface ActionEffectContext {
 export interface ActionDefinition {
   type: string;
   durationTicks: number;
+  // A line for the actor's log when they set about it ("You head to Oster
+  // Farm for your shift.") — omit it and starting is bookkeeping, not news:
+  // the completion line tells the story.
+  startMessage?: (ctx: ActionEffectContext) => string;
+  // Needs this action restores steadily while it's under way, per tick, in
+  // place of their usual decay (needs.ts) — sleep restores energy through
+  // the night rather than letting it run down until the moment you wake.
+  restoresPerTick?: Partial<Record<'hunger' | 'thirst' | 'energy' | 'warmth', number>>;
   // Called once, when the action's duration has elapsed. Draws from the
   // engine's seeded RNG so outcomes stay reproducible for a given seed;
   // ctx is read access for skill/gear checks, not a place to mutate state.
