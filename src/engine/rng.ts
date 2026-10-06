@@ -23,7 +23,12 @@ export function createRng(seed: number): SeededRng {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   }) as SeededRng;
-  next.getState = () => a;
+  // Always reported unsigned: `a` is held as a signed int32 between draws
+  // but as an unsigned one right after createRng(), so without this the
+  // same state read back as two different numbers depending on whether a
+  // draw had happened since the last reload — identical sequences, but
+  // different saved bytes and state fingerprints (perf/longRun.ts).
+  next.getState = () => a >>> 0;
   return next;
 }
 

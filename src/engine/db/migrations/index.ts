@@ -17,6 +17,7 @@ import { migration_0016_household_migration } from './0016_household_migration';
 import { migration_0017_open_actions_index } from './0017_open_actions_index';
 import { migration_0018_market_consignments } from './0018_market_consignments';
 import { migration_0019_economy_balance } from './0019_economy_balance';
+import { migration_0020_business_founding } from './0020_business_founding';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -43,4 +44,5 @@ export const migrations: Migration[] = [
   migration_0017_open_actions_index,
   migration_0018_market_consignments,
   migration_0019_economy_balance,
+  migration_0020_business_founding,
 ];

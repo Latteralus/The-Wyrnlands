@@ -5,6 +5,7 @@ import { getConservationCounters } from '../inventory/counters';
 import { findFirstActiveItem, produceItem, transferItem } from '../inventory/items';
 import { faucetCoin, getBalance, sinkCoin, transferCoin } from '../inventory/wallet';
 import { withOptional } from '../optional';
+import { recordMarketFlow } from './history';
 import type { ActionDefinition } from '../actions/types';
 import type { EventBus, EventScope } from '../eventBus';
 import type { Database } from 'sql.js';
@@ -341,6 +342,7 @@ export function buyFromMarket(
   }
   if (merchantUnits > 0) sinkCoin(db, bus, buyerId, merchantUnits * price, tick, note, scope, 'import');
   decrementStock(db, siteId, goodType, units);
+  recordMarketFlow(db, siteId, goodType, tick, 'sold', units);
 
   const itemIds: string[] = [];
   for (const unit of physical) {

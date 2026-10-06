@@ -16,6 +16,18 @@ describe('createRng', () => {
     expect(a()).not.toBe(b());
   });
 
+  it('reports one canonical state, whether or not a draw has happened since it was restored', () => {
+    const original = createRng(hashSeed('state-roundtrip'));
+    for (let i = 0; i < 50; i++) original();
+    const saved = original.getState();
+    const restored = createRng(saved);
+    // Same number straight after restoring (no draw yet) as the original holds...
+    expect(restored.getState()).toBe(saved);
+    expect(saved).toBeGreaterThanOrEqual(0);
+    // ...and the same sequence from there on.
+    expect(Array.from({ length: 5 }, () => restored())).toEqual(Array.from({ length: 5 }, () => original()));
+  });
+
   it('stays within [0, 1)', () => {
     const rng = createRng(hashSeed('bounds-check'));
     for (let i = 0; i < 1000; i++) {

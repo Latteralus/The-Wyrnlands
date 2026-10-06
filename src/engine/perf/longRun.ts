@@ -10,6 +10,7 @@ import {
   summarizeEconomyRun,
   type EconomySnapshot,
 } from '../reports/economySnapshot';
+import { collectEntrepreneurshipReport, formatEntrepreneurshipReport } from '../reports/entrepreneurship';
 import { runScriptedPlayerUntil } from '../scenarios/scriptedPlayer';
 import { seedDemoWorld } from '../seed/demoWorld';
 import { MINUTES_PER_DAY } from '../time/clock';
@@ -312,6 +313,8 @@ async function main(): Promise<void> {
   console.log(`Final conservation audit: ${finalAudit.passed ? 'PASSED' : 'FAILED'}`, finalAudit);
   const fingerprint = stateFingerprint(engine);
   console.log(`State fingerprint: ${fingerprint}`);
+  for (const line of formatEntrepreneurshipReport(collectEntrepreneurshipReport(engine.db, engine.tick)))
+    console.log(line);
   const eventMix = queryRows(
     engine.db,
     'SELECT scope, type, COUNT(*) AS n FROM event_log GROUP BY scope, type ORDER BY n DESC LIMIT 12',

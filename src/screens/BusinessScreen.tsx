@@ -1,5 +1,5 @@
 import { SceneHeader } from '../components/SceneHeader';
-import type { UiApi } from '../engine/ui-api';
+import { MINUTES_PER_DAY, type UiApi } from '../engine/ui-api';
 
 interface BusinessScreenProps {
   uiApi: UiApi;
@@ -29,6 +29,11 @@ export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps
   const calendar = uiApi.getCalendar();
   const company = uiApi.getCompany(companyId);
   const owner = company?.ownerId ? uiApi.getEntity(company.ownerId) : null;
+  const manager =
+    company?.managerId && company.managerId !== company.ownerId ? uiApi.getEntity(company.managerId) : null;
+  // Public knowledge, not the books (§9.3): who started it, when, and what
+  // the town says they saw in it.
+  const founding = uiApi.getCompanyFounding(companyId);
   const slots = uiApi.listJobSlotsForCompany(companyId);
   // §14.3 "Business logs (the ledger as narrative)": everything visible
   // about this company, across both scopes it logs to (business-scope
@@ -49,7 +54,17 @@ export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps
             {company.kind[0]?.toUpperCase()}
             {company.kind.slice(1)} · tier {company.tier} · {describeStatus(company)}
           </p>
-          {owner && <p className="business-owner">Run by {owner.name}.</p>}
+          {owner && (
+            <p className="business-owner">
+              {manager ? `Owned by ${owner.name}, managed by ${manager.name}.` : `Run by ${owner.name}.`}
+            </p>
+          )}
+          <p className="business-history">
+            {founding
+              ? `Founded by ${founding.founderName} on day ${Math.floor(founding.foundedTick / MINUTES_PER_DAY) + 1}` +
+                (founding.reasons.length > 0 ? ` — ${founding.reasons.join('; ')}.` : '.')
+              : 'An old village business, here before you came.'}
+          </p>
 
           <h3>Staffing</h3>
           <ul className="business-jobslots">

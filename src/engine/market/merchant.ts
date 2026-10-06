@@ -4,6 +4,7 @@ import { getGoodDefinition } from '../goods/catalog';
 import { destroyItem } from '../inventory/items';
 import { faucetCoin } from '../inventory/wallet';
 import { MINUTES_PER_DAY } from '../time/clock';
+import { recordMarketFlow } from './history';
 import { listAllMarketListings, marketStockContainerId, type MarketListing } from './market';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
@@ -67,6 +68,7 @@ export function applyMerchantTrade(db: Database, bus: EventBus, tick: number): v
         askingPrice,
         listing.id,
       ]);
+      recordMarketFlow(db, listing.siteId, listing.goodType, tick, 'imported', batch);
       bus.emit({
         tick,
         scope: 'business',
@@ -124,6 +126,7 @@ function exportGlut(
     perConsignor.set(unit.consignorId, (perConsignor.get(unit.consignorId) ?? 0) + 1);
   }
   db.run('UPDATE market_listings SET quantity = quantity - ? WHERE id = ?', [units.length, listing.id]);
+  recordMarketFlow(db, listing.siteId, listing.goodType, tick, 'exported', units.length);
   for (const [consignorId, count] of perConsignor) {
     const amount = count * unitPrice;
     faucetCoin(

@@ -28,6 +28,7 @@ describe('applyMigrations', () => {
       '0017_open_actions_index',
       '0018_market_consignments',
       '0019_economy_balance',
+      '0020_business_founding',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -39,6 +40,7 @@ describe('applyMigrations', () => {
         'actions',
         'audits',
         'companies',
+        'company_foundings',
         'company_ledger_entries',
         'employment',
         'entities',
@@ -49,12 +51,15 @@ describe('applyMigrations', () => {
         'items',
         'job_slots',
         'market_consignments',
+        'market_history',
         'market_listings',
         'needs',
         'provenance_events',
         'schema_migrations',
+        'site_tenures',
         'sites',
         'skills',
+        'traits',
         'wallets',
         'world_meta',
       ]),

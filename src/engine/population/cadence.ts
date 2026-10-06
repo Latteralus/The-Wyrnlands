@@ -1,6 +1,6 @@
 import { getCompany, recordLedgerEntry } from '../companies/companies';
 import { wearCompanyTool } from '../companies/tools';
-import { queryRow } from '../db/sqlite';
+import { queryRow, queryRows } from '../db/sqlite';
 import { createEntity, getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import {
@@ -24,7 +24,7 @@ import { buyFromMarket, getListing, marketStockContainerId, seedListing } from '
 import { clamp, ensureNeeds, getNeeds, type NeedKey } from '../needs/needs';
 import { getRecipeForSkill } from '../production/recipes';
 import { runProductionShift } from '../production/shift';
-import { addXp, getLevel, getSuccessChance } from '../skills/skills';
+import { addXp, getLevel, getSuccessChance, MANAGEMENT_SKILL } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
 import {
   addHouseholdMember,
@@ -83,6 +83,16 @@ const TITHE_RATE = 0.1; // of the balance above the threshold, weekly
 // Below this the parish can't keep carrying its destitute (see the daily
 // destitution check) — about ten days of alms for a household.
 const PARISH_HARDSHIP_RESERVE = 10 * CHARITY_STIPEND;
+
+// A household's food bill for a week at today's bread price — the unit any
+// "how much of a cushion does this household keep" rule is measured in
+// (an owner propping up their business, an entrepreneur deciding how much
+// to risk). A purse with no household (a lone foreground actor) counts as one.
+export function weeklyFoodCost(db: Database, householdId: string): number {
+  const members = Math.max(1, listHouseholdMembers(db, householdId).length);
+  const price = getListing(db, MARKET_SITE_ID, 'bread')?.price ?? getGoodDefinition('bread').basePrice;
+  return members * 7 * price;
+}
 
 export function ensureParish(db: Database): void {
   createEntity(db, PARISH_ID, 'The Parish');
@@ -485,6 +495,30 @@ export function applyNpcLaborDailyCadence(
   }
 }
 
+// §9.2/§13.2 "NPC Management skill grows with tenure": a worker who has been
+// with the same employer for a year (120 days) has seen how the place is run
+// — ordering, hiring, the bad weeks — and picks up a little Management, the
+// way a long-serving hand becomes a foreman. Slow by design (about a level
+// every hundred weeks at skills.ts's 200 XP/level), but it's the path from
+// worker to someone who could run a business (population/
+// entrepreneurship.ts). The owner and manager learn by running it instead
+// (companies/decisions.ts).
+const FOREMAN_TENURE_DAYS = 120;
+const FOREMAN_MANAGEMENT_XP_PER_WEEK = 2;
+
+export function applyWorkplaceExperienceWeeklyCadence(db: Database, tick: number): void {
+  const rows = queryRows(
+    db,
+    `SELECT employment.entity_id FROM employment
+     JOIN companies ON companies.id = employment.company_id
+     JOIN household_members ON household_members.entity_id = employment.entity_id
+     WHERE employment.status = 'active' AND employment.hired_at_tick <= ?
+       AND employment.entity_id IS NOT COALESCE(companies.manager_id, companies.owner_id)`,
+    [tick - FOREMAN_TENURE_DAYS * MINUTES_PER_DAY],
+  );
+  for (const row of rows) addXp(db, String(row[0]), MANAGEMENT_SKILL, FOREMAN_MANAGEMENT_XP_PER_WEEK);
+}
+
 // §10 "the adaptation ladder... more work / another member works" — named
 // in §10 since Stage 4 but explicitly not modeled then (no NPC job-seeking
 // behavior existed yet, see DECISIONS.md's Stage 4 entry). §Stage 5's real
@@ -506,8 +540,12 @@ export function applyNpcJobSeekingWeeklyCadence(
   tick: number,
   rng: () => number,
 ): void {
+  // Best-paying openings first (ties in listing order): with more openings
+  // than people looking, the employer offering more gets the hands — the
+  // one way wage competition works before anyone switches jobs mid-tenure.
   const remainingCapacity = new Map<string, number>();
-  for (const slot of listJobOpenings(db)) {
+  const openings = listJobOpenings(db).sort((a, b) => b.wageMin - a.wageMin);
+  for (const slot of openings) {
     const remaining = slot.capacity - countActiveEmploymentsForSlot(db, slot.id);
     if (remaining > 0) remainingCapacity.set(slot.id, remaining);
   }

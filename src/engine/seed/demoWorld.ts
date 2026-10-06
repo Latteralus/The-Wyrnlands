@@ -115,6 +115,20 @@ const MAX_STARTING_GRAIN = 40; // a bountiful recent harvest leaves the farm wit
 const FAILED_BUSINESS_CHANCE = 0.2; // §5.4's own example: "one may be freshly failed — the shuttered mill opening"
 const PARISH_ENDOWMENT = 500;
 
+// What each parcel is worth (world/tenure.ts prices leases and purchases
+// from it). The seeded companies hold theirs freehold, as they always
+// implicitly did; when one closes its land is free for the next taker.
+const FARM_LAND_VALUE = 800;
+const FOREST_LAND_VALUE = 500;
+const MILL_LAND_VALUE = 1000;
+const BAKERY_LAND_VALUE = 700;
+const VACANT_PARCELS = [
+  { id: 'eastfield', name: 'Eastfield', kind: 'farm', x: 6, y: -4, landValue: 600 },
+  { id: 'brook_meadow', name: 'Brook Meadow', kind: 'farm', x: -5, y: 4, landValue: 600 },
+  { id: 'northwood', name: 'Northwood Lot', kind: 'forest', x: 8, y: 6, landValue: 400 },
+  { id: 'old_bakehouse', name: 'The Old Bakehouse', kind: 'bakery', x: 1, y: 4, landValue: 600 },
+];
+
 function rolledPrice(basePrice: number, priceLevel: number): number {
   return Math.max(1, Math.round(basePrice * priceLevel));
 }
@@ -289,6 +303,16 @@ export function seedDemoWorld(engine: Engine): void {
   const harvestQuality = engine.nextRandom();
   const failedBusinessRoll = engine.nextRandom();
   const failedBusinessIndex = Math.floor(engine.nextRandom() * 4);
+  // Known up front (it draws nothing new) so a business that has already
+  // failed isn't handed starting capital first: before 2026-10-06 the
+  // failed company kept its whole starting purse — 12,500 coin for a failed
+  // farm — frozen in a closed company's wallet for the rest of the game.
+  const rollableCompanies = [FARM_COMPANY_ID, LOGGING_COMPANY_ID, MILL_COMPANY_ID, BAKERY_COMPANY_ID];
+  const failedCompanyId =
+    failedBusinessRoll < FAILED_BUSINESS_CHANCE ? (rollableCompanies[failedBusinessIndex] ?? null) : null;
+  const startingCapital = (companyId: string, amount: number, note: string) => {
+    if (companyId !== failedCompanyId) engine.faucetCoin(companyId, amount, note);
+  };
 
   engine.createEntity(PLAYER_ID, 'You');
   engine.ensureWallet(PLAYER_ID);
@@ -299,8 +323,21 @@ export function seedDemoWorld(engine: Engine): void {
   engine.createSite({ id: 'well', name: 'The Village Well', kind: 'well', x: 0, y: 0 });
   engine.createSite({ id: 'tavern', name: 'The Sleeping Ox', kind: 'tavern', x: 2, y: 1 });
   engine.createSite({ id: 'notice_board', name: 'The Notice Board', kind: 'notice_board', x: 1, y: -1 });
-  engine.createSite({ id: 'forest', name: "Hollow's Edge Forest", kind: 'forest', x: 5, y: 3 });
+  engine.createSite({
+    id: 'forest',
+    name: "Hollow's Edge Forest",
+    kind: 'forest',
+    x: 5,
+    y: 3,
+    landValue: FOREST_LAND_VALUE,
+  });
   engine.createSite({ id: 'market', name: 'The Market Stall', kind: 'market', x: -1, y: 2 });
+
+  // §5.3 "3-5 farmsteads + forest": land nobody works yet, for whoever
+  // decides to (world/tenure.ts; population/entrepreneurship.ts). No second
+  // mill race — the river has one good fall, so a second mill can only open
+  // where the first one closed.
+  for (const parcel of VACANT_PARCELS) engine.createSite(parcel);
 
   // Starting gear (§6: "the early game's shopping list... eventually your
   // own tools" starts with what you leave home wearing).
@@ -380,9 +417,17 @@ export function seedDemoWorld(engine: Engine): void {
   engine.seedMarketListing('market', 'axe', rolledPrice(getGoodDefinition('axe').basePrice, priceLevel), 5);
 
   // §Stage 3: the farm as employer.
-  engine.createSite({ id: FARM_SITE_ID, name: 'Oster Farm', kind: 'farm', x: 3, y: -3 });
+  engine.createSite({
+    id: FARM_SITE_ID,
+    name: 'Oster Farm',
+    kind: 'farm',
+    x: 3,
+    y: -3,
+    landValue: FARM_LAND_VALUE,
+  });
   engine.createCompany({ id: FARM_COMPANY_ID, name: 'Oster Farm', kind: 'farm', siteId: FARM_SITE_ID });
-  engine.faucetCoin(
+  engine.grantSiteTenure(FARM_SITE_ID, FARM_COMPANY_ID);
+  startingCapital(
     FARM_COMPANY_ID,
     FARM_STARTING_CAPITAL,
     "The farm's existing capital, built up over past seasons.",
@@ -444,7 +489,8 @@ export function seedDemoWorld(engine: Engine): void {
     kind: 'logging',
     siteId: LOGGING_SITE_ID,
   });
-  engine.faucetCoin(
+  engine.grantSiteTenure(LOGGING_SITE_ID, LOGGING_COMPANY_ID);
+  startingCapital(
     LOGGING_COMPANY_ID,
     LOGGING_STARTING_CAPITAL,
     "The camp's existing capital, built up over past seasons.",
@@ -484,9 +530,17 @@ export function seedDemoWorld(engine: Engine): void {
 
   // §Stage 5: the mill (grain -> flour). No tool requirement yet — company
   // equipment purchasing/upgrade tiers (§9.4/§9.5) are a later slice.
-  engine.createSite({ id: MILL_SITE_ID, name: 'Riverside Mill', kind: 'mill', x: -3, y: -1 });
+  engine.createSite({
+    id: MILL_SITE_ID,
+    name: 'Riverside Mill',
+    kind: 'mill',
+    x: -3,
+    y: -1,
+    landValue: MILL_LAND_VALUE,
+  });
   engine.createCompany({ id: MILL_COMPANY_ID, name: 'Riverside Mill', kind: 'mill', siteId: MILL_SITE_ID });
-  engine.faucetCoin(MILL_COMPANY_ID, MILL_STARTING_CAPITAL, "The mill's modest starting capital.");
+  engine.grantSiteTenure(MILL_SITE_ID, MILL_COMPANY_ID);
+  startingCapital(MILL_COMPANY_ID, MILL_STARTING_CAPITAL, "The mill's modest starting capital.");
   engine.createJobSlot({
     id: MILL_JOB_SLOT_ID,
     companyId: MILL_COMPANY_ID,
@@ -510,14 +564,22 @@ export function seedDemoWorld(engine: Engine): void {
 
   // §Stage 5: the bakery (flour -> bread) — closes the chain the market's
   // bread listing used to be a pure merchant import for.
-  engine.createSite({ id: BAKERY_SITE_ID, name: 'The Village Bakery', kind: 'bakery', x: 0, y: 3 });
+  engine.createSite({
+    id: BAKERY_SITE_ID,
+    name: 'The Village Bakery',
+    kind: 'bakery',
+    x: 0,
+    y: 3,
+    landValue: BAKERY_LAND_VALUE,
+  });
   engine.createCompany({
     id: BAKERY_COMPANY_ID,
     name: 'The Village Bakery',
     kind: 'bakery',
     siteId: BAKERY_SITE_ID,
   });
-  engine.faucetCoin(BAKERY_COMPANY_ID, BAKERY_STARTING_CAPITAL, "The bakery's modest starting capital.");
+  engine.grantSiteTenure(BAKERY_SITE_ID, BAKERY_COMPANY_ID);
+  startingCapital(BAKERY_COMPANY_ID, BAKERY_STARTING_CAPITAL, "The bakery's modest starting capital.");
   engine.createJobSlot({
     id: BAKERY_JOB_SLOT_ID,
     companyId: BAKERY_COMPANY_ID,
@@ -540,23 +602,18 @@ export function seedDemoWorld(engine: Engine): void {
   );
 
   // §5.4's own example: "one may be freshly failed — the shuttered mill
-  // opening." Reuses the real closure path (companies/decisions.ts's
-  // tryCloseCompany does the same two calls once a company's own insolvency
-  // runs out its grace period) rather than a seed-only shortcut — this
-  // business really did operate (its owner was really hired above) and
-  // really did fail, just before tick 0 instead of during play.
-  const rollableCompanies = [FARM_COMPANY_ID, LOGGING_COMPANY_ID, MILL_COMPANY_ID, BAKERY_COMPANY_ID];
-  let failedCompanyId: string | null = null;
+  // opening." Goes through the one real closure path (companies/
+  // decisions.ts's shutDownCompany — the same one insolvency takes) rather
+  // than a seed-only shortcut: its owner was really hired above, and the
+  // failure really lets them go, sends its tools to auction, spoils its
+  // stock and frees its land — just before tick 0 instead of during play.
   let failedCompanyName: string | null = null;
-  if (failedBusinessRoll < FAILED_BUSINESS_CHANCE) {
-    failedCompanyId = rollableCompanies[failedBusinessIndex]!;
-    const failedCompany = engine.getCompany(failedCompanyId)!;
-    failedCompanyName = failedCompany.name;
-    engine.terminateAllEmploymentsForCompany(
+  if (failedCompanyId) {
+    failedCompanyName = engine.getCompany(failedCompanyId)?.name ?? null;
+    engine.shutDownCompany(
       failedCompanyId,
-      `${failedCompany.name} had already closed its doors before you arrived.`,
+      `${failedCompanyName ?? 'The business'} had already closed its doors before you arrived.`,
     );
-    engine.closeCompany(failedCompanyId);
   }
 
   // §5.4: "this village, this season, this situation" — a short record of

@@ -61,3 +61,24 @@ export function queryRows(db: Database, sql: string, params?: BindParams): SqlVa
 export function queryRow(db: Database, sql: string, params?: BindParams): SqlValue[] | undefined {
   return queryRows(db, sql, params)[0];
 }
+
+// Runs fn atomically: everything it writes is rolled back if it throws
+// (the error is rethrown). A SAVEPOINT rather than BEGIN, so it nests inside
+// the transaction Engine.advanceTicks already holds open around every tick —
+// and works standalone too (outside a transaction a savepoint opens one).
+// Used where a multi-step operation must never be left half-done, e.g.
+// founding a company (companies/founding.ts).
+let savepointCounter = 0;
+export function withSavepoint<T>(db: Database, fn: () => T): T {
+  const name = `sp_${++savepointCounter}`;
+  db.run(`SAVEPOINT ${name}`);
+  try {
+    const result = fn();
+    db.run(`RELEASE ${name}`);
+    return result;
+  } catch (err) {
+    db.run(`ROLLBACK TO ${name}`);
+    db.run(`RELEASE ${name}`);
+    throw err;
+  }
+}

@@ -70,6 +70,24 @@ export interface UiApi {
   countActiveEmploymentsForSlot(jobSlotId: string): number;
   getCompanyLedgerSummary(companyId: string, sinceTick: number): LedgerSummary;
   queryActorLog(actorId: string, limit?: number): EngineEvent[];
+  // Public history of a business founded during play (who, when, why) —
+  // null for one that predates the game.
+  getCompanyFounding(companyId: string): CompanyFounding | null;
+  // Who works a parcel of land right now, or null if nobody holds it.
+  getSiteHolder(siteId: string): SiteHolder | null;
+}
+
+export interface CompanyFounding {
+  founderId: string;
+  founderName: string;
+  foundedTick: number;
+  reasons: string[];
+}
+
+export interface SiteHolder {
+  holderId: string;
+  holderName: string;
+  kind: 'freehold' | 'lease';
 }
 
 export function createUiApi(engine: Engine): UiApi {
@@ -106,5 +124,25 @@ export function createUiApi(engine: Engine): UiApi {
     countActiveEmploymentsForSlot: (jobSlotId) => engine.countActiveEmploymentsForSlot(jobSlotId),
     getCompanyLedgerSummary: (companyId, sinceTick) => engine.getCompanyLedgerSummary(companyId, sinceTick),
     queryActorLog: (actorId, limit) => engine.queryActorLog(actorId, limit),
+    getCompanyFounding: (companyId) => {
+      const record = engine.getCompanyFounding(companyId);
+      if (!record) return null;
+      const reasons = record.details?.reasons;
+      return {
+        founderId: record.founderId,
+        founderName: engine.getEntity(record.founderId)?.name ?? record.founderId,
+        foundedTick: record.tick,
+        reasons: Array.isArray(reasons) ? reasons.map(String) : [],
+      };
+    },
+    getSiteHolder: (siteId) => {
+      const tenure = engine.getOpenSiteTenure(siteId);
+      if (!tenure) return null;
+      return {
+        holderId: tenure.holderId,
+        holderName: engine.getEntity(tenure.holderId)?.name ?? tenure.holderId,
+        kind: tenure.kind,
+      };
+    },
   };
 }

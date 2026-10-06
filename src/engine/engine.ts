@@ -17,8 +17,10 @@ import {
   summarizeLedger,
   type Company,
   type LedgerSummary,
+  type NewCompany,
 } from './companies/companies';
-import { applyCompanyDailyCadence } from './companies/decisions';
+import { applyCompanyDailyCadence, shutDownCompany } from './companies/decisions';
+import { getFoundingRecord, type FoundingRecord } from './companies/founding';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
 import { createEntity, getEntity, type Entity } from './entities';
@@ -53,6 +55,7 @@ import {
   type QuitJobOptions,
 } from './jobs/jobs';
 import { attachLogger, queryActorLog, queryLog } from './logs/logger';
+import { recordMarketDay } from './market/history';
 import {
   decrementStock,
   getListing,
@@ -77,7 +80,9 @@ import {
   applyNpcJobSeekingWeeklyCadence,
   applyParishTitheWeeklyCadence,
   applyNpcLaborDailyCadence,
+  applyWorkplaceExperienceWeeklyCadence,
 } from './population/cadence';
+import { applyEntrepreneurshipCadence, ENTREPRENEURSHIP_INTERVAL_DAYS } from './population/entrepreneurship';
 import {
   addHouseholdMember,
   createHousehold,
@@ -100,6 +105,7 @@ import {
   listSitesByKind,
   type Site,
 } from './world/sites';
+import { getOpenTenure, grantSiteTenure, type Tenure, type TenureKind } from './world/tenure';
 import type { ActionDefinition, QueuedAction } from './actions/types';
 import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
 import type { PhaseTimer } from './perf/phaseTimer';
@@ -294,13 +300,25 @@ export class Engine {
       this.timed('daily.labor', () => applyNpcLaborDailyCadence(this.db, this.bus, nextTick, this.rng));
       this.timed('daily.companies', () => applyCompanyDailyCadence(this.db, this.bus, nextTick));
       this.timed('daily.merchant', () => applyMerchantTrade(this.db, this.bus, nextTick));
-      this.timed('daily.prices', () => driftMarketPrices(this.db));
+      this.timed('daily.prices', () => {
+        driftMarketPrices(this.db);
+        recordMarketDay(this.db, nextTick);
+      });
       this.timed('daily.households', () =>
         applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold),
       );
       this.timed('daily.spoilage', () => applySpoilage(this.db, this.bus, nextTick));
 
       if ((nextTick / MINUTES_PER_DAY) % 7 === 0) {
+        // People with savings weigh starting a business of their own
+        // (population/entrepreneurship.ts) — before job-seeking, so a new
+        // business's openings are there for this week's hiring pass.
+        if ((nextTick / MINUTES_PER_DAY) % ENTREPRENEURSHIP_INTERVAL_DAYS === 0) {
+          this.timed('fortnightly.entrepreneurship', () =>
+            applyEntrepreneurshipCadence(this.db, this.bus, nextTick, this.rng),
+          );
+        }
+        this.timed('weekly.experience', () => applyWorkplaceExperienceWeeklyCadence(this.db, nextTick));
         // §Stage 5: fills newly-opened job slots (company growth) and
         // realizes §10's "another member works" adaptation rung.
         this.timed('weekly.jobSeeking', () =>
@@ -539,12 +557,26 @@ export class Engine {
 
   // A company is also an entities row (its own wallet/inventory owner),
   // same as a person — see companies/companies.ts's header comment.
-  createCompany(
-    company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick' | 'lastUpgradedTick'>,
-  ): void {
+  createCompany(company: NewCompany): void {
     this.createEntity(company.id, company.name);
     createCompany(this.db, company);
     this.ensureWallet(company.id);
+  }
+
+  // Land a business already held before the game began (seed content) —
+  // no payment, unlike a founding's acquireSiteTenure (world/tenure.ts).
+  grantSiteTenure(siteId: string, holderId: string, kind: TenureKind = 'freehold'): void {
+    grantSiteTenure(this.db, siteId, holderId, kind, this.tick);
+  }
+
+  getOpenSiteTenure(siteId: string): Tenure | null {
+    return getOpenTenure(this.db, siteId);
+  }
+
+  // Why a business exists (companies/founding.ts's founding record), as
+  // the town would tell it: who started it, when, and what they saw.
+  getCompanyFounding(companyId: string): FoundingRecord | null {
+    return getFoundingRecord(this.db, companyId);
   }
 
   getCompany(id: string): Company | null {
@@ -607,6 +639,20 @@ export class Engine {
   // the flag.
   closeCompany(companyId: string): void {
     closeCompany(this.db, companyId, this.tick);
+  }
+
+  // §9.6/§5.4: closes a business through the one real closure path
+  // (companies/decisions.ts's shutDownCompany): workers let go, tools to
+  // auction, stock spoiled, remaining cash back to the owner, land freed.
+  // Seed content uses it for a business that failed before the game began.
+  shutDownCompany(
+    companyId: string,
+    message: string,
+    reason: 'insolvency' | 'wound_down' | 'failed_before_start' = 'failed_before_start',
+  ): void {
+    const company = getCompany(this.db, companyId);
+    if (!company || company.closedAtTick !== null) return;
+    shutDownCompany(this.db, this.bus, company, this.tick, { message, reason });
   }
 
   terminateAllEmploymentsForCompany(companyId: string, message: string): void {

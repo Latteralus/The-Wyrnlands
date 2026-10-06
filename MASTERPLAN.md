@@ -353,6 +353,7 @@ Full v1 chains; NPC business ledgers with **Management-weighted decisions**; **c
 
 ### Stage 6 — Player Enterprise
 Buy/rent plots; construction (real materials, builder labor, timed oversight); found a company; hire with haggling and labor inertia; **full tabbed company screens (§14.2)**; equipment purchasing; upgrade tiers; contracts as buyer; housing ladder to ownership.
+*(Built ahead of this stage, 2026-10-06: NPCs already found companies through the same engine primitives the player will use here — land tenure (`world/tenure.ts`: lease or freehold, one holder per parcel), transactional founding (`companies/founding.ts`), and the business-type catalog. Stage 6 adds the player's side: the screens, the choice, and construction.)*
 **Exit:** pauper → solvent small business achievable in **~3 in-game years** of efficient play (harsh-pace table §13.1 holds); NPC competitors respond in prices, wages, and equipment.
 
 ### Stage 7 — Region, Transport & the Trade School
@@ -364,7 +365,7 @@ Reputation and NPC memory; class ladder privileges; taxes → treasury → civic
 **Exit:** unassisted playthrough pauper → established burgher; Stage 6 saves load; a co-worker's wedding appears in the settlement log of a long test run.
 
 ### Post-v1 (designed-for, not built)
-Combat, crime & law; aging/death/heirs (dynasty mode); NPC-founded new businesses; religion; guilds/apprenticeships; credit; disease; feast-day calendars; coin debasement; ale/textile/smithing chains; settlement growth; procedural regions; scripting mods; optional graphical map client atop the same engine.
+Combat, crime & law; aging/death/heirs (dynasty mode); religion; guilds/apprenticeships; credit; disease; feast-day calendars; coin debasement; ale/textile/smithing chains; settlement growth; procedural regions; scripting mods; optional graphical map client atop the same engine.
 
 ---
 

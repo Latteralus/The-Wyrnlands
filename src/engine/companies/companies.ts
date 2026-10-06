@@ -1,4 +1,5 @@
 import { queryRow, queryRows } from '../db/sqlite';
+import { releaseTenuresForHolder } from '../world/tenure';
 import type { Database } from 'sql.js';
 
 // §9.1 Structure. A company is also an entities row (its id is the
@@ -33,17 +34,29 @@ export interface Company {
   closedAtTick: number | null;
   // §9.5: the tick of the last upgrade, for decisions.ts's cooldown.
   lastUpgradedTick: number | null;
+  // §9.2 owner vs manager: who makes the daily decisions, when that isn't
+  // the owner. Null = the owner manages, as every company so far does — see
+  // getCompanyManagerId. The extension point for hiring a professional
+  // manager, or an heir who owns the place but can't run it.
+  managerId: string | null;
+  // When the business opened — 0 for the seeded companies that predate the
+  // game. Its own track-record checks (decisions.ts) measure from here.
+  foundedAtTick: number;
+  // Lifecycle milestones for the business log (decisions.ts's
+  // recordMilestones) — null until reached.
+  firstHireTick: number | null;
+  firstProfitTick: number | null;
 }
 
-export function createCompany(
-  db: Database,
-  company: Omit<Company, 'ownerId' | 'insolventSinceTick' | 'tier' | 'closedAtTick' | 'lastUpgradedTick'>,
-): void {
-  db.run('INSERT INTO companies (id, name, kind, site_id) VALUES (?, ?, ?, ?)', [
+export type NewCompany = Pick<Company, 'id' | 'name' | 'kind' | 'siteId'> & { foundedAtTick?: number };
+
+export function createCompany(db: Database, company: NewCompany): void {
+  db.run('INSERT INTO companies (id, name, kind, site_id, founded_at_tick) VALUES (?, ?, ?, ?, ?)', [
     company.id,
     company.name,
     company.kind,
     company.siteId,
+    company.foundedAtTick ?? 0,
   ]);
 }
 
@@ -51,8 +64,36 @@ export function setCompanyOwner(db: Database, companyId: string, ownerId: string
   db.run('UPDATE companies SET owner_id = ? WHERE id = ?', [ownerId, companyId]);
 }
 
+export function setCompanyManager(db: Database, companyId: string, managerId: string | null): void {
+  db.run('UPDATE companies SET manager_id = ? WHERE id = ?', [managerId, companyId]);
+}
+
+// Whose Management skill runs the business (§9.2): its appointed manager,
+// else its owner. Owner draws go to the owner either way.
+export function getCompanyManagerId(company: Company): string | null {
+  return company.managerId ?? company.ownerId;
+}
+
+export function setCompanyMilestone(
+  db: Database,
+  companyId: string,
+  milestone: 'first_hire_tick' | 'first_profit_tick',
+  tick: number,
+): void {
+  db.run(`UPDATE companies SET ${milestone} = ? WHERE id = ?`, [tick, companyId]);
+}
+
+// Open businesses an entity owns — how much an aspiring founder already
+// has on their plate.
+export function countOpenCompaniesOwnedBy(db: Database, ownerId: string): number {
+  const row = queryRow(db, 'SELECT COUNT(*) FROM companies WHERE owner_id = ? AND closed_at_tick IS NULL', [
+    ownerId,
+  ]);
+  return Number(row?.[0] ?? 0);
+}
+
 const COMPANY_COLUMNS =
-  'id, name, kind, site_id, owner_id, insolvent_since_tick, tier, closed_at_tick, last_upgraded_tick';
+  'id, name, kind, site_id, owner_id, insolvent_since_tick, tier, closed_at_tick, last_upgraded_tick, manager_id, founded_at_tick, first_hire_tick, first_profit_tick';
 
 function rowToCompany(row: unknown[]): Company {
   return {
@@ -65,6 +106,10 @@ function rowToCompany(row: unknown[]): Company {
     tier: Number(row[6]),
     closedAtTick: row[7] === null ? null : Number(row[7]),
     lastUpgradedTick: row[8] === null || row[8] === undefined ? null : Number(row[8]),
+    managerId: typeof row[9] === 'string' ? row[9] : null,
+    foundedAtTick: Number(row[10] ?? 0),
+    firstHireTick: row[11] === null || row[11] === undefined ? null : Number(row[11]),
+    firstProfitTick: row[12] === null || row[12] === undefined ? null : Number(row[12]),
   };
 }
 
@@ -87,11 +132,14 @@ export function bumpCompanyTier(db: Database, companyId: string, tick: number): 
   db.run('UPDATE companies SET tier = tier + 1, last_upgraded_tick = ? WHERE id = ?', [tick, companyId]);
 }
 
-// §9.6 "permanent failure": marks a company closed for good — companies/
-// decisions.ts's tryCloseCompany is the only caller, and it's responsible
-// for terminating employment and auctioning/liquidating inventory first.
+// §9.6 "permanent failure": marks a company closed for good and gives up
+// its land (world/tenure.ts) so the parcel is free for the next taker —
+// every closure path comes through here. Callers (decisions.ts's closure
+// and wind-down, seed content) are responsible for terminating employment
+// and liquidating inventory first.
 export function closeCompany(db: Database, companyId: string, tick: number): void {
   db.run('UPDATE companies SET closed_at_tick = ? WHERE id = ?', [tick, companyId]);
+  releaseTenuresForHolder(db, companyId, tick);
 }
 
 // §9.3 Ledger — a minimal, real version. Full tabbed company screens
@@ -102,7 +150,13 @@ export function closeCompany(db: Database, companyId: string, tick: number): voi
 // whole event_log.
 // owner_draw (§9.3): profit paid out to the owner's household — equity, not
 // an operating cost, so it's reported separately and excluded from net.
-export type LedgerEntryKind = 'revenue' | 'material_cost' | 'wage' | 'tax' | 'owner_draw';
+// owner_contribution is the reverse (founding capital, a rescue injection);
+// capital is money spent on lasting assets (land, a founding tool). Both
+// are kept out of operating net too, so a new business's startup outlay
+// doesn't read as a month of losses. rent (world/tenure.ts leases) is an
+// operating cost.
+export type LedgerEntryKind =
+  'revenue' | 'material_cost' | 'wage' | 'tax' | 'owner_draw' | 'owner_contribution' | 'capital' | 'rent';
 
 export function recordLedgerEntry(
   db: Database,
@@ -142,8 +196,11 @@ export interface LedgerSummary {
   materialCost: number;
   wages: number;
   tax: number;
+  rent: number;
   net: number;
   ownerDraws: number;
+  ownerContributions: number;
+  capital: number;
 }
 
 export function summarizeLedger(db: Database, companyId: string, sinceTick: number): LedgerSummary {
@@ -153,7 +210,17 @@ export function summarizeLedger(db: Database, companyId: string, sinceTick: numb
      WHERE company_id = ? AND tick >= ? GROUP BY kind`,
     [companyId, sinceTick],
   );
-  const summary: LedgerSummary = { revenue: 0, materialCost: 0, wages: 0, tax: 0, net: 0, ownerDraws: 0 };
+  const summary: LedgerSummary = {
+    revenue: 0,
+    materialCost: 0,
+    wages: 0,
+    tax: 0,
+    rent: 0,
+    net: 0,
+    ownerDraws: 0,
+    ownerContributions: 0,
+    capital: 0,
+  };
   for (const row of rows) {
     const amount = Number(row[1]);
     switch (String(row[0]) as LedgerEntryKind) {
@@ -172,8 +239,17 @@ export function summarizeLedger(db: Database, companyId: string, sinceTick: numb
       case 'owner_draw':
         summary.ownerDraws = amount;
         break;
+      case 'owner_contribution':
+        summary.ownerContributions = amount;
+        break;
+      case 'capital':
+        summary.capital = amount;
+        break;
+      case 'rent':
+        summary.rent = amount;
+        break;
     }
   }
-  summary.net = summary.revenue - summary.materialCost - summary.wages - summary.tax;
+  summary.net = summary.revenue - summary.materialCost - summary.wages - summary.tax - summary.rent;
   return summary;
 }

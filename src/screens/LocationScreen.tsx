@@ -45,6 +45,18 @@ export function LocationScreen({
   const listings = uiApi.listMarketListings(site.id);
   const employment = uiApi.getEmployment(playerId);
   const present = uiApi.listPresentEntities(site.id);
+  const holder = site.landValue ? uiApi.getSiteHolder(site.id) : null;
+  // A site kind's content lists the shift action of the business seeded
+  // there (data/locationContent.ts); only offer it where that business
+  // actually works — not at every parcel of the same kind (a vacant field
+  // isn't Oster Farm), and not once it has closed.
+  const openings = uiApi.listJobOpenings();
+  const actions = content.actions.filter((action) => {
+    const jobSlotId = workShiftJobSlotId(action.type);
+    if (jobSlotId === null) return true;
+    const slot = openings.find((s) => s.id === jobSlotId);
+    return slot !== undefined && uiApi.getCompany(slot.companyId)?.siteId === site.id;
+  });
 
   const handleAction = (type: string) => {
     uiApi.queueAction(playerId, type);
@@ -60,6 +72,13 @@ export function LocationScreen({
       </button>
 
       <p className="location-description">{content.description}</p>
+      {site.landValue ? (
+        <p className="location-holder">
+          {holder
+            ? `${holder.kind === 'lease' ? 'Leased' : 'Held'} by ${holder.holderName}.`
+            : 'Nobody works this land right now — it could be leased.'}
+        </p>
+      ) : null}
 
       <h3>{"Who's here"}</h3>
       {present.length === 0 ? (
@@ -82,7 +101,7 @@ export function LocationScreen({
 
       <h3>What you can do</h3>
       <div className="location-actions">
-        {content.actions.map((action) => {
+        {actions.map((action) => {
           const good = marketGoodType(action.type);
           const listing = good ? listings.find((l) => l.goodType === good) : undefined;
           const jobSlotId = workShiftJobSlotId(action.type);
