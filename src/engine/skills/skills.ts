@@ -1,4 +1,4 @@
-import { queryRow } from '../db/sqlite';
+import { queryRow, queryRows } from '../db/sqlite';
 import type { Database } from 'sql.js';
 
 // v1 skill list (§13.2). This module is generic over any skill name, so
@@ -37,6 +37,31 @@ export function getLevel(db: Database, entityId: string, skill: string): number 
 export function addXp(db: Database, entityId: string, skill: string, amount: number): void {
   ensureSkill(db, entityId, skill);
   db.run('UPDATE skills SET xp = xp + ? WHERE entity_id = ? AND skill = ?', [amount, entityId, skill]);
+}
+
+export interface SkillRecord {
+  skill: string;
+  xp: number;
+  level: number;
+  // XP still needed for the next level, or null at the cap.
+  xpToNextLevel: number | null;
+}
+
+// Everything an entity has any XP in, best first — a character sheet or
+// profile (§14.2) reads this rather than knowing the skill list.
+export function listSkills(db: Database, entityId: string): SkillRecord[] {
+  return queryRows(db, 'SELECT skill, xp FROM skills WHERE entity_id = ? ORDER BY xp DESC, skill', [
+    entityId,
+  ]).map((row) => {
+    const xp = Number(row[1]);
+    const level = Math.min(MAX_LEVEL, Math.floor(xp / XP_PER_LEVEL));
+    return {
+      skill: String(row[0]),
+      xp,
+      level,
+      xpToNextLevel: level >= MAX_LEVEL ? null : (level + 1) * XP_PER_LEVEL - xp,
+    };
+  });
 }
 
 // Skill affects failure rate (§13.2). Unskilled work is allowed but

@@ -4,7 +4,24 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
-## 2026-10-06 (latest) — NPC-founded businesses
+## 2026-10-06 (latest) — Richer profiles with an Inspect mode (§11.2, §14.2, §9.3)
+
+The person, household and business screens showed very little (a condition line and current job; a purse and member list; staffing). They now draw on one read-only engine module, `reports/profiles.ts`, exposed through `ui-api` (`getPersonProfile` / `getHouseholdProfile` / `getBusinessProfile`, plus `getCalendarAt` for dates).
+
+**Decision (the user's): what a townsperson would know by default, everything behind an Inspect toggle.** §9.3 says NPC businesses expose "what an observer would plausibly know", and §8.1 rule 6 that information is imperfect — that stays the default. Each profile keeps public knowledge at its top level and the rest under `inspect`; screens render `inspect` only when the toggle is on. The toggle lives in `App.tsx`, so it persists while moving between profiles.
+
+- **Person** — public: condition, current job and start date, household's wealth band, every skill and level, work history, ties. Inspect: own and household purse, wage, ambition and risk tolerance, exact needs, worn gear with condition, what they carry.
+- **Household** — public: a wealth band ('destitute' … 'wealthy', on the thresholds the simulation itself acts on: charity 25, strain 150, tithe 300, then 1,000 and 5,000), circumstances the neighbours would notice (no work, going hungry, on charity, left), members with their jobs, businesses they run. Inspect: exact purse, weeks of bread it buys, the hunger tally and destitution date against the limits that make them leave (read from `population/cadence.ts`, not copied), what's kept at home.
+- **Business** — public: owner/manager, founder and their stated reasons, the land and its terms, staff with start dates, what's on the premises (stock and tools with condition), the business log. Inspect: cash, the books for the last four weeks and since opening (revenue, materials, wages, rent, net, draws, owner contributions, asset spending), each hand's wage, and the founder's private reckoning (what they believed, the market as they read it, outlay and reserve).
+- **Ties** are the relationships the world models today — household, employer and the person they answer to, workmates, owned/managed/founded businesses — each a link to that profile. Marriage, kin and friendship are Stage 8 and not faked.
+
+Reading a profile never writes: traits are read with `peekTrait` (the same value `getTrait` will later store, derived without storing it). Verified by a test that counts rows across six tables before and after reading every profile type.
+
+**Verification:** `npm run validate` clean (165 tests: 164 passed, 1 skipped). Playwright against the dev server: household → member → employer, Inspect off and on, the toggle persisting across screens; zero console errors.
+
+---
+
+## 2026-10-06 (later still) — NPC-founded businesses
 
 Moves "NPC-founded new businesses" out of MASTERPLAN's post-v1 list (the user asked for it earlier than planned) and builds it on primitives player enterprise (Stage 6) will share. Answers the balancing pass's open decision 2 ("a failed farm at start kills the town — needs business founding/reopening") — partly; see Results.
 

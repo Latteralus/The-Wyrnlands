@@ -9,10 +9,34 @@ import type { MarketListing } from '../market/market';
 import type { Needs } from '../needs/needs';
 import type { Household } from '../population/households';
 import type { PresentEntity } from '../population/presence';
+import type {
+  BusinessProfile,
+  CompanyRole,
+  HouseholdMember,
+  HouseholdProfile,
+  InventoryLine,
+  JobRecord,
+  PersonProfile,
+  Relation,
+  StaffMember,
+  WealthBand,
+} from '../reports/profiles';
+import type { SkillRecord } from '../skills/skills';
 import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
 
 export type {
+  BusinessProfile,
+  CompanyRole,
+  HouseholdMember,
+  HouseholdProfile,
+  InventoryLine,
+  JobRecord,
+  PersonProfile,
+  Relation,
+  SkillRecord,
+  StaffMember,
+  WealthBand,
   EngineEvent,
   EventScope,
   QueuedAction,
@@ -75,6 +99,13 @@ export interface UiApi {
   getCompanyFounding(companyId: string): CompanyFounding | null;
   // Who works a parcel of land right now, or null if nobody holds it.
   getSiteHolder(siteId: string): SiteHolder | null;
+  // Profiles (§11.2, §14.2): public knowledge at the top level, everything
+  // else under `inspect` — the screens show that only in Inspect mode.
+  getPersonProfile(entityId: string): PersonProfile;
+  getHouseholdProfile(householdId: string): HouseholdProfile | null;
+  getBusinessProfile(companyId: string): BusinessProfile | null;
+  // The calendar date a tick falls on.
+  getCalendarAt(tick: number): Calendar;
 }
 
 export interface CompanyFounding {
@@ -144,5 +175,9 @@ export function createUiApi(engine: Engine): UiApi {
         kind: tenure.kind,
       };
     },
+    getPersonProfile: (entityId) => engine.getPersonProfile(entityId),
+    getHouseholdProfile: (householdId) => engine.getHouseholdProfile(householdId),
+    getBusinessProfile: (companyId) => engine.getBusinessProfile(companyId),
+    getCalendarAt: (tick) => engine.calendarAt(tick),
   };
 }

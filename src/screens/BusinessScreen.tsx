@@ -1,69 +1,155 @@
+import {
+  InspectPanel,
+  InspectToggle,
+  InventoryList,
+  type ProfileNavigation,
+} from '../components/ProfileParts';
 import { SceneHeader } from '../components/SceneHeader';
-import { MINUTES_PER_DAY, type UiApi } from '../engine/ui-api';
+import { capitalize, formatDate } from '../components/profileFormat';
+import type { BusinessProfile, LedgerSummary, UiApi } from '../engine/ui-api';
 
-interface BusinessScreenProps {
+interface BusinessScreenProps extends ProfileNavigation {
   uiApi: UiApi;
   companyId: string;
+  inspect: boolean;
+  onToggleInspect: () => void;
   onBack: () => void;
 }
 
+const STATUS_TEXT: Record<BusinessProfile['status'], string> = {
+  open: 'Open for business.',
+  struggling: 'Struggling to make ends meet.',
+  closed: 'Closed.',
+};
+
+// "salesPerDay" → "sales per day"
+function humanize(key: string): string {
+  return key.replace(/([A-Z])/g, ' $1').toLowerCase();
+}
+
+function formatValue(value: unknown): string {
+  if (typeof value === 'number') return String(Math.round(value * 10) / 10);
+  if (value && typeof value === 'object')
+    return Object.entries(value as Record<string, unknown>)
+      .map(([k, v]) => `${humanize(k)} ${formatValue(v)}`)
+      .join(' · ');
+  return String(value);
+}
+
+function LedgerColumn({ label, ledger }: { label: string; ledger: LedgerSummary }) {
+  return (
+    <div className="ledger-column">
+      <h4>{label}</h4>
+      <dl className="profile-facts">
+        <dt>Revenue</dt>
+        <dd>{ledger.revenue}</dd>
+        <dt>Materials</dt>
+        <dd>{ledger.materialCost}</dd>
+        <dt>Wages</dt>
+        <dd>{ledger.wages}</dd>
+        <dt>Rent</dt>
+        <dd>{ledger.rent}</dd>
+        <dt>Net</dt>
+        <dd className={ledger.net < 0 ? 'is-negative' : ''}>{ledger.net}</dd>
+        <dt>Paid to owner</dt>
+        <dd>{ledger.ownerDraws}</dd>
+        <dt>Put in by owner</dt>
+        <dd>{ledger.ownerContributions}</dd>
+        <dt>Spent on assets</dt>
+        <dd>{ledger.capital}</dd>
+      </dl>
+    </div>
+  );
+}
+
 // §14.2 "NPC business view: the observable subset (prices, staffing,
-// visible stock, reputation later)" — deliberately does NOT show ledger
-// figures (revenue/cost/net). §9.3 draws that line explicitly: "Player
-// businesses expose the full ledger with history; NPC businesses expose
-// what an observer would plausibly know." A passerby can see whether a
-// business is hiring, thriving, or shuttered — not its books.
-function describeStatus(company: { insolventSinceTick: number | null; closedAtTick: number | null }): string {
-  if (company.closedAtTick !== null) return 'Closed.';
-  if (company.insolventSinceTick !== null) return 'Struggling to make ends meet.';
-  return 'Open for business.';
-}
-
-function statusClass(company: { insolventSinceTick: number | null; closedAtTick: number | null }): string {
-  if (company.closedAtTick !== null) return 'business-status--closed';
-  if (company.insolventSinceTick !== null) return 'business-status--struggling';
-  return 'business-status--open';
-}
-
-export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps) {
+// visible stock, reputation later)". By default, what a passerby could see
+// or hear in town — who runs it, the land it works, who works there, what's
+// on the premises, why it was founded (§9.3: "NPC businesses expose what an
+// observer would plausibly know"). Inspect mode adds what only its owner
+// knows: cash, its books (last four weeks and lifetime), each hand's wage,
+// and the founder's private reckoning when they started it.
+export function BusinessScreen({
+  uiApi,
+  companyId,
+  inspect,
+  onToggleInspect,
+  onBack,
+  ...nav
+}: BusinessScreenProps) {
   const calendar = uiApi.getCalendar();
-  const company = uiApi.getCompany(companyId);
-  const owner = company?.ownerId ? uiApi.getEntity(company.ownerId) : null;
-  const manager =
-    company?.managerId && company.managerId !== company.ownerId ? uiApi.getEntity(company.managerId) : null;
-  // Public knowledge, not the books (§9.3): who started it, when, and what
-  // the town says they saw in it.
-  const founding = uiApi.getCompanyFounding(companyId);
+  const profile = uiApi.getBusinessProfile(companyId);
   const slots = uiApi.listJobSlotsForCompany(companyId);
-  // §14.3 "Business logs (the ledger as narrative)": everything visible
-  // about this company, across both scopes it logs to (business-scope
-  // routine sales, settlement-scope hirings/upgrades/closures).
+  // §14.3 "Business logs (the ledger as narrative)".
   const log = uiApi.queryActorLog(companyId, 30);
 
   return (
     <section>
-      <SceneHeader icon="🏛️" title={company?.name ?? 'Unknown Business'} calendar={calendar} />
+      <SceneHeader icon="🏛️" title={profile?.name ?? 'Unknown Business'} calendar={calendar} />
 
-      <button type="button" className="back-button" onClick={onBack}>
-        ← Back
-      </button>
+      <div className="profile-toolbar">
+        <button type="button" className="back-button" onClick={onBack}>
+          ← Back
+        </button>
+        <InspectToggle inspect={inspect} onToggle={onToggleInspect} />
+      </div>
 
-      {company && (
+      {profile && (
         <>
-          <p className={`business-status ${statusClass(company)}`}>
-            {company.kind[0]?.toUpperCase()}
-            {company.kind.slice(1)} · tier {company.tier} · {describeStatus(company)}
+          <p className={`business-status business-status--${profile.status}`}>
+            {capitalize(profile.kind)} · tier {profile.tier} · {STATUS_TEXT[profile.status]}
           </p>
-          {owner && (
+          {profile.ownerId && (
             <p className="business-owner">
-              {manager ? `Owned by ${owner.name}, managed by ${manager.name}.` : `Run by ${owner.name}.`}
+              {profile.managerId ? 'Owned by ' : 'Run by '}
+              <button
+                type="button"
+                className="link-button"
+                onClick={() => nav.onSelectNpc(profile.ownerId ?? '')}
+              >
+                {profile.ownerName}
+              </button>
+              {profile.managerId && (
+                <>
+                  , managed by{' '}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => nav.onSelectNpc(profile.managerId ?? '')}
+                  >
+                    {profile.managerName}
+                  </button>
+                </>
+              )}
+              .
             </p>
           )}
           <p className="business-history">
-            {founding
-              ? `Founded by ${founding.founderName} on day ${Math.floor(founding.foundedTick / MINUTES_PER_DAY) + 1}` +
-                (founding.reasons.length > 0 ? ` — ${founding.reasons.join('; ')}.` : '.')
-              : 'An old village business, here before you came.'}
+            {profile.foundedTick !== null ? (
+              <>
+                Founded by{' '}
+                <button
+                  type="button"
+                  className="link-button"
+                  onClick={() => nav.onSelectNpc(profile.founderId ?? '')}
+                >
+                  {profile.founderName}
+                </button>{' '}
+                in {formatDate(uiApi, profile.foundedTick)}
+                {profile.foundingReasons.length > 0 ? ` — ${profile.foundingReasons.join('; ')}.` : '.'}
+              </>
+            ) : (
+              'An old village business, here before you came.'
+            )}
+            {profile.closedTick !== null && ` Closed in ${formatDate(uiApi, profile.closedTick)}.`}
+          </p>
+          <p className="profile-muted">
+            Works {profile.siteName}
+            {profile.tenure
+              ? profile.tenure.kind === 'lease'
+                ? ` on a lease (${profile.tenure.weeklyRent} coin a week).`
+                : ', which it owns outright.'
+              : '.'}
           </p>
 
           <h3>Staffing</h3>
@@ -76,6 +162,57 @@ export function BusinessScreen({ uiApi, companyId, onBack }: BusinessScreenProps
               </li>
             ))}
           </ul>
+          {profile.staff.length > 0 && (
+            <ul className="profile-list">
+              {profile.staff.map((s) => (
+                <li key={s.id}>
+                  <button type="button" className="link-button" onClick={() => nav.onSelectNpc(s.id)}>
+                    {s.name}
+                  </button>{' '}
+                  <span className="profile-muted">
+                    {s.title}, since {formatDate(uiApi, s.hiredTick)}
+                    {inspect && ` — ${s.wage} coin a shift`}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+
+          <h3>On the premises</h3>
+          <InventoryList lines={profile.stock} empty="Nothing on hand." />
+
+          {inspect && (
+            <InspectPanel title="The books">
+              <dl className="profile-facts">
+                <dt>Cash</dt>
+                <dd>{profile.inspect.cash} coin</dd>
+              </dl>
+              <div className="ledger-columns">
+                <LedgerColumn label="Last four weeks" ledger={profile.inspect.lastFourWeeks} />
+                <LedgerColumn label="Since it opened" ledger={profile.inspect.lifetime} />
+              </div>
+              {profile.inspect.investment !== null && (
+                <>
+                  <h4>The founder&apos;s reckoning</h4>
+                  <dl className="profile-facts">
+                    <div className="profile-fact-row">
+                      <dt>Put in</dt>
+                      <dd>
+                        {profile.inspect.investment} coin, of {profile.inspect.founderPurseBefore} the
+                        household had
+                      </dd>
+                    </div>
+                    {Object.entries(profile.inspect.founderEstimate ?? {}).map(([key, value]) => (
+                      <div key={key} className="profile-fact-row">
+                        <dt>{capitalize(humanize(key))}</dt>
+                        <dd>{formatValue(value)}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              )}
+            </InspectPanel>
+          )}
 
           <h3>Business Log</h3>
           <ul className="log-list">

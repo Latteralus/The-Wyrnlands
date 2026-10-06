@@ -78,7 +78,7 @@ export const CHARITY_THRESHOLD = 25; // coin — below this, sell belongings/tak
 // floor into redistribution — coin pooling in a prosperous owner's purse
 // flows back to the destitute — instead of a pure money printer.
 export const PARISH_ID = 'parish';
-const TITHE_THRESHOLD = 300; // coin a household keeps before tithing anything
+export const TITHE_THRESHOLD = 300; // coin a household keeps before tithing anything
 const TITHE_RATE = 0.1; // of the balance above the threshold, weekly
 // Below this the parish can't keep carrying its destitute (see the daily
 // destitution check) — about ten days of alms for a household.
@@ -594,13 +594,13 @@ export function applyNpcJobSeekingWeeklyCadence(
 // charity, another member works — there was no open slot for one) and
 // leaves for good. Deterministic day-count threshold, same reproducibility
 // reasoning as companies/decisions.ts's closure grace period.
-const EMIGRATION_GRACE_DAYS = 60;
+export const EMIGRATION_GRACE_DAYS = 60;
 // §11.4 lists hunger first among push factors. A household that hasn't
 // been able to feed everyone for this long leaves even with coin in its
 // purse — before
 // 2026-10-06 only destitution (no money AND no job) counted, so a starving
 // town with a little money never emptied at all.
-const HUNGER_EMIGRATION_DAYS = 45;
+export const HUNGER_EMIGRATION_DAYS = 45;
 
 function ownsOpenCompany(db: Database, members: string[]): boolean {
   if (members.length === 0) return false;

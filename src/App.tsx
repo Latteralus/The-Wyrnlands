@@ -31,6 +31,10 @@ function App() {
   // location/household/business and back — SettlementScreen remounts fresh
   // each time it becomes the active view.
   const [settlementTab, setSettlementTab] = useState<SettlementTab>('locations');
+  // Inspect mode for the person/household/business profiles: show what a
+  // townsperson couldn't know (exact coin, belongings, traits, books). Held
+  // here so it survives moving between profiles.
+  const [inspect, setInspect] = useState(false);
   // Unread on purpose — its setter just forces a re-render so screens re-query
   // uiApi (a thin sync SQLite wrapper) after a tick batch or a queued action.
   const [, bumpCounter] = useState(0);
@@ -70,6 +74,14 @@ function App() {
   }
 
   const site = view.kind === 'location' ? uiApi.getSite(view.siteId) : null;
+  const profileProps = {
+    inspect,
+    onToggleInspect: () => setInspect((on) => !on),
+    onBack: () => setView({ kind: 'settlement' }),
+    onSelectNpc: (entityId: string) => setView({ kind: 'npc', entityId }),
+    onSelectHousehold: (householdId: string) => setView({ kind: 'household', householdId }),
+    onSelectBusiness: (companyId: string) => setView({ kind: 'business', companyId }),
+  };
 
   return (
     <div className="game-shell">
@@ -96,25 +108,11 @@ function App() {
               onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
             />
           ) : view.kind === 'household' ? (
-            <HouseholdScreen
-              uiApi={uiApi}
-              householdId={view.householdId}
-              onBack={() => setView({ kind: 'settlement' })}
-              onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
-            />
+            <HouseholdScreen uiApi={uiApi} householdId={view.householdId} {...profileProps} />
           ) : view.kind === 'npc' ? (
-            <NpcProfileScreen
-              uiApi={uiApi}
-              entityId={view.entityId}
-              onBack={() => setView({ kind: 'settlement' })}
-              onSelectHousehold={(householdId) => setView({ kind: 'household', householdId })}
-            />
+            <NpcProfileScreen uiApi={uiApi} entityId={view.entityId} {...profileProps} />
           ) : view.kind === 'business' ? (
-            <BusinessScreen
-              uiApi={uiApi}
-              companyId={view.companyId}
-              onBack={() => setView({ kind: 'settlement' })}
-            />
+            <BusinessScreen uiApi={uiApi} companyId={view.companyId} {...profileProps} />
           ) : (
             <SettlementScreen
               uiApi={uiApi}

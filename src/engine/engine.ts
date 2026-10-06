@@ -93,6 +93,14 @@ import {
   type Household,
 } from './population/households';
 import { listPresentEntities, type PresentEntity } from './population/presence';
+import {
+  getBusinessProfile,
+  getHouseholdProfile,
+  getPersonProfile,
+  type BusinessProfile,
+  type HouseholdProfile,
+  type PersonProfile,
+} from './reports/profiles';
 import { createRng, hashSeed, type SeededRng } from './rng';
 import { addXp, ensureSkill, getLevel, getSuccessChance, getXp } from './skills/skills';
 import { MINUTES_PER_DAY, deriveCalendar, type Calendar } from './time/clock';
@@ -216,6 +224,12 @@ export class Engine {
 
   get calendar(): Calendar {
     return deriveCalendar(this.tick, this.getStartSeasonIndex());
+  }
+
+  // The date a past (or future) tick falls on — for "hired in spring of
+  // year 1" lines in profiles and logs.
+  calendarAt(tick: number): Calendar {
+    return deriveCalendar(tick, this.getStartSeasonIndex());
   }
 
   // §5.4: a short, human-readable record of this world's rolled starting
@@ -577,6 +591,19 @@ export class Engine {
   // the town would tell it: who started it, when, and what they saw.
   getCompanyFounding(companyId: string): FoundingRecord | null {
     return getFoundingRecord(this.db, companyId);
+  }
+
+  // §11.2/§14.2 profiles (reports/profiles.ts) — read-only.
+  getPersonProfile(entityId: string): PersonProfile {
+    return getPersonProfile(this.db, entityId);
+  }
+
+  getHouseholdProfile(householdId: string): HouseholdProfile | null {
+    return getHouseholdProfile(this.db, householdId);
+  }
+
+  getBusinessProfile(companyId: string): BusinessProfile | null {
+    return getBusinessProfile(this.db, companyId, this.tick);
   }
 
   getCompany(id: string): Company | null {

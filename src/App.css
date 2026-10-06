@@ -603,3 +603,123 @@ button:disabled {
     transition: none;
   }
 }
+
+/* --- Profiles: shared pieces (person / household / business) --- */
+
+.profile-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+.inspect-toggle {
+  font-size: 0.85rem;
+}
+
+.inspect-toggle.is-on {
+  background: var(--accent-bg);
+  border-color: var(--accent-border);
+  color: var(--accent-h);
+  font-weight: 600;
+}
+
+.inspect-panel {
+  margin-top: 1.25rem;
+  padding: 0.75rem 1rem 1rem;
+  border: 1px dashed var(--accent-border);
+  border-radius: 8px;
+  background: var(--accent-bg);
+}
+
+.inspect-panel h3 {
+  margin-top: 0.25rem;
+}
+
+.inspect-panel h4 {
+  margin: 0.9rem 0 0.35rem;
+}
+
+.inspect-panel-note {
+  font-weight: normal;
+  font-size: 0.8rem;
+  opacity: 0.7;
+}
+
+.profile-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.profile-skills {
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.35rem 1.1rem;
+}
+
+.profile-muted {
+  opacity: 0.75;
+}
+
+.profile-empty {
+  opacity: 0.65;
+  font-style: italic;
+}
+
+.profile-facts {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 0.25rem 1rem;
+  margin: 0;
+}
+
+.profile-facts dt {
+  opacity: 0.75;
+}
+
+.profile-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-facts dd.is-negative {
+  color: var(--danger);
+}
+
+.profile-fact-row {
+  display: contents;
+}
+
+.ledger-columns {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 2rem;
+}
+
+.ledger-column {
+  min-width: 12rem;
+}
+
+/* A name that navigates — reads as text, not as a chunky button. */
+button.link-button {
+  background: none;
+  border: none;
+  padding: 0;
+  font: inherit;
+  color: var(--accent-h);
+  text-decoration: underline;
+  text-decoration-color: var(--accent-border);
+  text-underline-offset: 2px;
+  cursor: pointer;
+  box-shadow: none;
+}
+
+button.link-button:hover {
+  color: var(--accent);
+  background: none;
+}

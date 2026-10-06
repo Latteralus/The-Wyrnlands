@@ -27,9 +27,20 @@ function worldSeed(db: Database): string {
 export function getTrait(db: Database, entityId: string, trait: TraitName): number {
   const row = queryRow(db, 'SELECT value FROM traits WHERE entity_id = ? AND trait = ?', [entityId, trait]);
   if (row) return Number(row[0]);
-  const value = createRng(hashSeed(`${worldSeed(db)}:${entityId}:${trait}`))();
+  const value = deriveTrait(db, entityId, trait);
   db.run('INSERT INTO traits (entity_id, trait, value) VALUES (?, ?, ?)', [entityId, trait, value]);
   return value;
+}
+
+// The same value getTrait would return, without storing it — for read-only
+// callers (profiles, the UI) that must never change world state.
+export function peekTrait(db: Database, entityId: string, trait: TraitName): number {
+  const row = queryRow(db, 'SELECT value FROM traits WHERE entity_id = ? AND trait = ?', [entityId, trait]);
+  return row ? Number(row[0]) : deriveTrait(db, entityId, trait);
+}
+
+function deriveTrait(db: Database, entityId: string, trait: TraitName): number {
+  return createRng(hashSeed(`${worldSeed(db)}:${entityId}:${trait}`))();
 }
 
 // For tests and scenario content that needs a particular personality.
