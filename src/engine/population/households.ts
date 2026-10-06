@@ -9,9 +9,24 @@ export interface Household {
   id: string;
   name: string;
   homeSiteId: string;
+  // §11.4 Migration / §10's "migrate" rung — mirrors companies'
+  // insolventSinceTick/closedAtTick pair exactly. destituteSinceTick is the
+  // first tick this household had no employed members and a balance below
+  // the charity threshold, cleared on recovery (set/cleared daily by
+  // cadence.ts's applyHouseholdDailyCadence). departedAtTick is set once,
+  // for good, when a household stays destitute past its grace period and
+  // emigrates (cadence.ts's applyHouseholdMigrationWeeklyCadence) — never
+  // cleared, matching every other soft-delete in this codebase.
+  destituteSinceTick: number | null;
+  departedAtTick: number | null;
 }
 
-export function createHousehold(db: Database, household: Household): void {
+const HOUSEHOLD_COLUMNS = 'id, name, home_site_id, destitute_since_tick, departed_at_tick';
+
+export function createHousehold(
+  db: Database,
+  household: Omit<Household, 'destituteSinceTick' | 'departedAtTick'>,
+): void {
   db.run('INSERT INTO households (id, name, home_site_id) VALUES (?, ?, ?)', [
     household.id,
     household.name,
@@ -20,16 +35,33 @@ export function createHousehold(db: Database, household: Household): void {
 }
 
 function rowToHousehold(row: unknown[]): Household {
-  return { id: String(row[0]), name: String(row[1]), homeSiteId: String(row[2]) };
+  return {
+    id: String(row[0]),
+    name: String(row[1]),
+    homeSiteId: String(row[2]),
+    destituteSinceTick: row[3] === null ? null : Number(row[3]),
+    departedAtTick: row[4] === null ? null : Number(row[4]),
+  };
 }
 
 export function getHousehold(db: Database, id: string): Household | null {
-  const row = queryRow(db, 'SELECT id, name, home_site_id FROM households WHERE id = ?', [id]);
+  const row = queryRow(db, `SELECT ${HOUSEHOLD_COLUMNS} FROM households WHERE id = ?`, [id]);
   return row ? rowToHousehold(row) : null;
 }
 
 export function listHouseholds(db: Database): Household[] {
-  return queryRows(db, 'SELECT id, name, home_site_id FROM households ORDER BY id').map(rowToHousehold);
+  return queryRows(db, `SELECT ${HOUSEHOLD_COLUMNS} FROM households ORDER BY id`).map(rowToHousehold);
+}
+
+export function setHouseholdDestitution(db: Database, householdId: string, sinceTick: number | null): void {
+  db.run('UPDATE households SET destitute_since_tick = ? WHERE id = ?', [sinceTick, householdId]);
+}
+
+// §11.4 "emigrants take theirs out": cadence.ts's applyHouseholdMigrationWeeklyCadence
+// is the only caller, and it's responsible for terminating employment and
+// liquidating/sinking whatever the household still holds first.
+export function departHousehold(db: Database, householdId: string, tick: number): void {
+  db.run('UPDATE households SET departed_at_tick = ? WHERE id = ?', [tick, householdId]);
 }
 
 export function addHouseholdMember(db: Database, householdId: string, entityId: string): void {
@@ -56,6 +88,19 @@ export function listHouseholdMembers(db: Database, householdId: string): string[
 // other foreground actors (full per-tick simulation) from "NPC" (background-
 // aggregated, daily/weekly cadence — see population/cadence.ts's header
 // comment for why that split is load-bearing, not cosmetic).
+//
+// Excludes members of a departed household (§11.4 Migration) — presence.ts's
+// listPresentEntities is the only caller, and an emigrated household has no
+// presence to roll (they're gone, not just off today). The membership row
+// itself is kept (never deleted, matching every soft-delete in this
+// codebase), so getHouseholdIdForMember/listHouseholdMembers still resolve
+// it as history — this function alone narrows to the "currently in the
+// settlement" set.
 export function listAllHouseholdMemberIds(db: Database): string[] {
-  return queryRows(db, 'SELECT entity_id FROM household_members').map((row) => String(row[0]));
+  return queryRows(
+    db,
+    `SELECT household_members.entity_id FROM household_members
+     JOIN households ON households.id = household_members.household_id
+     WHERE households.departed_at_tick IS NULL`,
+  ).map((row) => String(row[0]));
 }

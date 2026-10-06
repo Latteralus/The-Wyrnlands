@@ -6,6 +6,10 @@ export interface Entity {
   name: string;
 }
 
+export function createEntity(db: Database, id: string, name: string): void {
+  db.run('INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)', [id, name]);
+}
+
 export function getEntity(db: Database, id: string): Entity | null {
   const row = queryRow(db, 'SELECT id, name FROM entities WHERE id = ?', [id]);
   return row ? { id: String(row[0]), name: String(row[1]) } : null;

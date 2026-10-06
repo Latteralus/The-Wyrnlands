@@ -24,6 +24,7 @@ describe('applyMigrations', () => {
       '0013_items_container_type_index',
       '0014_event_log_actor_index',
       '0015_rolled_starting_conditions',
+      '0016_household_migration',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 

@@ -13,6 +13,7 @@ import { migration_0012_company_closure } from './0012_company_closure';
 import { migration_0013_items_container_type_index } from './0013_items_container_type_index';
 import { migration_0014_event_log_actor_index } from './0014_event_log_actor_index';
 import { migration_0015_rolled_starting_conditions } from './0015_rolled_starting_conditions';
+import { migration_0016_household_migration } from './0016_household_migration';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -35,4 +36,5 @@ export const migrations: Migration[] = [
   migration_0013_items_container_type_index,
   migration_0014_event_log_actor_index,
   migration_0015_rolled_starting_conditions,
+  migration_0016_household_migration,
 ];

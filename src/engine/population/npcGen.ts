@@ -4,8 +4,10 @@ import type { Engine } from '../engine';
 
 // §5.3 "First Playable: one town (~40-80 persistent NPCs)." Placeholder name
 // pools (§14.1's "placeholder... wired" precedent) — a real writing pass is
-// a budgeted deliverable, not this stage's job.
-const FIRST_NAMES = [
+// a budgeted deliverable, not this stage's job. Exported so cadence.ts's
+// migration cadence (§11.4) can name arriving immigrant households/members
+// from the same pool instead of a second, drifting copy.
+export const FIRST_NAMES = [
   'Alda',
   'Bram',
   'Cedric',
@@ -27,7 +29,7 @@ const FIRST_NAMES = [
   'Sela',
   'Tomas',
 ];
-const SURNAMES = [
+export const SURNAMES = [
   'Ashford',
   'Brackwater',
   'Cotter',
@@ -53,7 +55,7 @@ const SURNAMES = [
 const STARTING_RESERVE = 80; // placeholder "modest family savings" — real rolled starting conditions are Stage 5 (§5.4)
 const SPARE_CLOAK_CHANCE = 0.4; // gives the adaptation ladder's "sell belongings" rung something real to bite on
 
-function pick<T>(rng: () => number, items: readonly T[]): T {
+export function pick<T>(rng: () => number, items: readonly T[]): T {
   const item = items[Math.floor(rng() * items.length)];
   if (item === undefined) throw new Error('pick() called with an empty list');
   return item;

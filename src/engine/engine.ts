@@ -21,7 +21,7 @@ import {
 import { applyCompanyDailyCadence } from './companies/decisions';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
-import { getEntity, type Entity } from './entities';
+import { createEntity, getEntity, type Entity } from './entities';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
 import { equipItem, getWornGear, getWornItemInSlot, wearGear, type WornGear } from './gear/gear';
 import { getGoodDefinition } from './goods/catalog';
@@ -71,6 +71,7 @@ import {
 } from './needs/needs';
 import {
   applyHouseholdDailyCadence,
+  applyHouseholdMigrationWeeklyCadence,
   applyNpcJobSeekingWeeklyCadence,
   applyNpcLaborWeeklyCadence,
 } from './population/cadence';
@@ -281,6 +282,10 @@ export class Engine {
         // realizes §10's "another member works" adaptation rung — see
         // population/cadence.ts's header comment on this function.
         applyNpcJobSeekingWeeklyCadence(this.db, this.bus, nextTick, this.rng);
+        // §11.4 Migration — after labor/job-seeking so a household about to
+        // qualify gets this week's hiring pass first, matching §10's ladder
+        // order (migrate is the last rung, after "another member works").
+        applyHouseholdMigrationWeeklyCadence(this.db, this.bus, nextTick, this.rng);
       }
       runConservationAudit(this.db, this.bus, nextTick);
     }
@@ -324,7 +329,7 @@ export class Engine {
   }
 
   createEntity(id: string, name: string): void {
-    this.db.run('INSERT OR IGNORE INTO entities (id, name) VALUES (?, ?)', [id, name]);
+    createEntity(this.db, id, name);
   }
 
   queueAction(actorId: string, type: string): number {
@@ -582,7 +587,7 @@ export class Engine {
 
   // A household is also an entities row (its own wallet/inventory owner),
   // same as a company — see population/households.ts's header comment.
-  createHousehold(household: Household): void {
+  createHousehold(household: Omit<Household, 'destituteSinceTick' | 'departedAtTick'>): void {
     this.createEntity(household.id, household.name);
     createHousehold(this.db, household);
     this.ensureWallet(household.id);

@@ -98,7 +98,10 @@ export function SettlementScreen({
               <span className="location-card-icon" aria-hidden="true">
                 🏠
               </span>
-              <span className="location-card-name">{household.name}</span>
+              <span className="location-card-name">
+                {household.name}
+                {household.departedAtTick !== null && ' (departed)'}
+              </span>
             </button>
           ))}
         </div>

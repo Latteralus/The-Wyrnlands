@@ -1,11 +1,12 @@
 import { getCompany, recordLedgerEntry } from '../companies/companies';
-import { getEntityName } from '../entities';
+import { createEntity, getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import {
   consumeActiveItems,
   countActiveItemsOfType,
   destroyItem,
   findFirstActiveItem,
+  listActiveItemsInContainer,
   produceItem,
   transferItem,
 } from '../inventory/items';
@@ -16,12 +17,23 @@ import {
   getActiveEmployment,
   listActiveEmploymentsForSlot,
   listJobOpenings,
+  quitJob,
 } from '../jobs/jobs';
 import { decrementStock, getListing, marketStockContainerId, seedListing } from '../market/market';
-import { clamp, getNeeds, type NeedKey } from '../needs/needs';
+import { clamp, ensureNeeds, getNeeds, type NeedKey } from '../needs/needs';
 import { getRecipeForSkill } from '../production/recipes';
 import { addXp, getLevel } from '../skills/skills';
-import { listHouseholdMembers, listHouseholds, type Household } from './households';
+import { MINUTES_PER_DAY } from '../time/clock';
+import {
+  addHouseholdMember,
+  createHousehold,
+  departHousehold,
+  listHouseholdMembers,
+  listHouseholds,
+  setHouseholdDestitution,
+  type Household,
+} from './households';
+import { FIRST_NAMES, SURNAMES, pick } from './npcGen';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
 
@@ -238,6 +250,7 @@ export function applyHouseholdDailyCadence(
   exposedToCold: boolean,
 ): void {
   for (const household of listHouseholds(db)) {
+    if (household.departedAtTick !== null) continue; // §11.4 — gone, nothing left to simulate
     const members = listHouseholdMembers(db, household.id);
     if (members.length === 0) continue;
 
@@ -255,6 +268,20 @@ export function applyHouseholdDailyCadence(
     }
 
     evaluateHouseholdBudget(db, bus, household, tick);
+
+    // §11.4/§10's "migrate" rung: destitute = no employed member and still
+    // charity-reliant after this day's adaptation-ladder attempts above.
+    // Set/cleared daily, same shape as companies' insolvent_since_tick
+    // (companies/decisions.ts) — applyHouseholdMigrationWeeklyCadence reads
+    // this weekly to decide whether the grace period has run out.
+    const stillDestitute =
+      getBalance(db, household.id) < CHARITY_THRESHOLD &&
+      members.every((memberId) => getActiveEmployment(db, memberId) === null);
+    if (stillDestitute) {
+      if (household.destituteSinceTick === null) setHouseholdDestitution(db, household.id, tick);
+    } else if (household.destituteSinceTick !== null) {
+      setHouseholdDestitution(db, household.id, null);
+    }
   }
 }
 
@@ -377,6 +404,7 @@ export function applyNpcJobSeekingWeeklyCadence(
   if (remainingCapacity.size === 0) return;
 
   const households = listHouseholds(db)
+    .filter((household) => household.departedAtTick === null)
     .map((household) => ({
       household,
       strained: getBalance(db, household.id) < RESERVE_HEALTHY_THRESHOLD,
@@ -408,4 +436,156 @@ export function applyNpcJobSeekingWeeklyCadence(
       else remainingCapacity.set(slotId, remaining);
     }
   }
+}
+
+// §10's own last, previously-unmodeled adaptation-ladder rung, and §11.4
+// Migration: "push (unemployment, hunger, rent, fire, debt) vs. pull (jobs,
+// wages...)." A household that stays destitute (no employed member, still
+// charity-reliant — see applyHouseholdDailyCadence's destitution tracking)
+// past this grace period has exhausted every earlier rung (sell belongings,
+// charity, another member works — there was no open slot for one) and
+// leaves for good. Deterministic day-count threshold, same reproducibility
+// reasoning as companies/decisions.ts's closure grace period.
+const EMIGRATION_GRACE_DAYS = 21;
+
+function tryEmigrateHousehold(
+  db: Database,
+  bus: EventBus,
+  household: Household,
+  members: string[],
+  tick: number,
+): void {
+  if (household.destituteSinceTick === null) return;
+  const daysDestitute = (tick - household.destituteSinceTick) / MINUTES_PER_DAY;
+  if (daysDestitute < EMIGRATION_GRACE_DAYS) return;
+
+  // Defensive, not load-bearing: destitution already requires zero employed
+  // members, but a departing household shouldn't leave a dangling job behind
+  // it regardless.
+  for (const memberId of members) {
+    quitJob(db, bus, memberId, tick, {
+      scope: 'settlement',
+      message: `${household.name} leaves the settlement.`,
+    });
+  }
+
+  // §8.1 rule 1: "spoilage and wear are the only destruction" — a household
+  // this poor has already sold anything worth selling via the adaptation
+  // ladder's earlier rungs; whatever little remains has no buyer once its
+  // owner is gone, same reasoning as companies/decisions.ts's liquidateCompany
+  // for unsellable leftover stock.
+  for (const item of listActiveItemsInContainer(db, household.id)) {
+    destroyItem(db, bus, item.id, 'spoiled', tick, {
+      note: `Left behind when ${household.name} left, spoils.`,
+      scope: 'settlement',
+    });
+  }
+
+  // §8.1 rule 2: "money conservation: ...sinks (taxes, imports, emigrants)."
+  const balance = getBalance(db, household.id);
+  if (balance > 0) {
+    sinkCoin(
+      db,
+      bus,
+      household.id,
+      balance,
+      tick,
+      `${household.name} takes its savings and leaves.`,
+      'settlement',
+    );
+  }
+
+  departHousehold(db, household.id, tick);
+  bus.emit({
+    tick,
+    scope: 'settlement',
+    actorId: household.id,
+    type: 'household.migration.emigrated',
+    message: `${household.name} packs up and leaves, unable to make ends meet after a hard stretch.`,
+    data: { memberCount: members.length, daysDestitute: Math.floor(daysDestitute) },
+  });
+}
+
+// §11.4's "pull (jobs, wages...) against known alternatives": unfilled job
+// openings are the one pull signal this stage can honestly compute — no
+// wage/price comparison against another settlement exists before Stage 7's
+// region model. A new household arriving unemployed (not placed directly
+// into a slot) keeps this simple and lets the very next weekly job-seeking
+// pass (applyNpcJobSeekingWeeklyCadence, called just before this in
+// engine.ts) do the actual hiring, rather than duplicating its logic here.
+const IMMIGRATION_CHANCE_PER_WEEK = 0.25;
+const IMMIGRANT_MIN_MEMBERS = 1;
+const IMMIGRANT_MAX_MEMBERS = 2;
+const IMMIGRANT_STARTING_COIN_MIN = 10;
+const IMMIGRANT_STARTING_COIN_MAX = 25;
+// No dedicated housing sites exist yet (§12 Housing is a later module) — same
+// "tavern stands in as town center" stand-in seed/demoWorld.ts already uses
+// for every other household's home site.
+const IMMIGRANT_HOME_SITE_ID = 'tavern';
+
+function tryImmigrateHousehold(db: Database, bus: EventBus, tick: number, rng: () => number): void {
+  const totalVacancies = listJobOpenings(db).reduce(
+    (sum, slot) => sum + Math.max(0, slot.capacity - countActiveEmploymentsForSlot(db, slot.id)),
+    0,
+  );
+  if (totalVacancies === 0) return;
+  if (rng() >= IMMIGRATION_CHANCE_PER_WEEK) return;
+
+  const surname = pick(rng, SURNAMES);
+  const householdId = `household-immigrant-${tick}`;
+  const householdName = `The ${surname} Household`;
+
+  createEntity(db, householdId, householdName);
+  createHousehold(db, { id: householdId, name: householdName, homeSiteId: IMMIGRANT_HOME_SITE_ID });
+
+  const startingCoin =
+    IMMIGRANT_STARTING_COIN_MIN +
+    Math.floor(rng() * (IMMIGRANT_STARTING_COIN_MAX - IMMIGRANT_STARTING_COIN_MIN + 1));
+  faucetCoin(
+    db,
+    bus,
+    householdId,
+    startingCoin,
+    tick,
+    `${householdName} arrives with modest travel savings.`,
+    'settlement',
+  );
+
+  const memberCount =
+    IMMIGRANT_MIN_MEMBERS + Math.floor(rng() * (IMMIGRANT_MAX_MEMBERS - IMMIGRANT_MIN_MEMBERS + 1));
+  for (let i = 0; i < memberCount; i++) {
+    const entityId = `${householdId}-member-${i}`;
+    createEntity(db, entityId, `${pick(rng, FIRST_NAMES)} ${surname}`);
+    ensureNeeds(db, entityId, tick);
+    addHouseholdMember(db, householdId, entityId);
+  }
+
+  bus.emit({
+    tick,
+    scope: 'settlement',
+    actorId: householdId,
+    type: 'household.migration.arrived',
+    message: `${householdName} arrives in town, drawn by word of steady work.`,
+    data: { memberCount },
+  });
+}
+
+// §4.2 cadence: "weekly (... migration ...)." §11.4 Migration in full: push
+// (emigration, for households the ladder's every earlier rung has failed)
+// and pull (immigration, drawn by unfilled work) — Stage 5's own exit test
+// names "a migration wave" as one of the emergent outcomes a 2-year run must
+// produce.
+export function applyHouseholdMigrationWeeklyCadence(
+  db: Database,
+  bus: EventBus,
+  tick: number,
+  rng: () => number,
+): void {
+  for (const household of listHouseholds(db)) {
+    if (household.departedAtTick !== null) continue;
+    const members = listHouseholdMembers(db, household.id);
+    tryEmigrateHousehold(db, bus, household, members, tick);
+  }
+
+  tryImmigrateHousehold(db, bus, tick, rng);
 }
