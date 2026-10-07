@@ -25,7 +25,7 @@ import { peekTrait } from '../population/traits';
 import { listSkills, type SkillRecord } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
 import { getOpenTenure, type TenureKind } from '../world/tenure';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // Profiles (§11.2 NPC profile, §14.2 household screen and business view):
 // everything the interface can show about a person, a household or a

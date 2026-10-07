@@ -1,6 +1,6 @@
 import { queryRow } from '../db/sqlite';
 import { createRng, hashSeed } from '../rng';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // §11.1 "hidden traits (ambition, greed, loyalty, industriousness, risk
 // tolerance)", §16's traits table. Only the two that anything reads exist so

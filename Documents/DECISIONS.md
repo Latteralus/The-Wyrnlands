@@ -2,11 +2,41 @@
 
 Tracks where the implementation diverges from, or makes a specific choice within, MASTERPLAN.md. Append-only; newest entries at the top.
 
+**Current architecture:** the desktop entry below is authoritative for host, process boundaries, persistence, security and tooling. Entries after it are dated history: references to IndexedDB, renderer-owned Engine/UiApi, browser scripts, old source paths and earlier test counts describe their original build, not current development instructions. Economic/design reasoning remains useful unless a later entry supersedes it. See [documentation guide](./README.md) and [current player validation](./PLAYER_VALIDATION.md).
+
+**Measurement units:** the game has 120 days/year. Some earlier entries called 365-day benchmark intervals "years"; interpret those measurements by their stated day counts (730/1,095/1,825), not as game-calendar years. Current benchmarks use explicit simulated-day intervals.
+
+---
+
+## 2026-10-06 — The Wyrnlands becomes a desktop application
+
+Electron replaces the browser host without rewriting the economy. React presents the world, a separate simulation process runs it, and SQLite persists it directly to a file. Existing screens, Engine, actions, migrations and headless scenarios remain. The staged migration is recorded in `Documents/MigrationPlan.md`; richer NPC operations are deferred to `Documents/Archive/ScheduledActivityPlan.md`.
+
+**Processes and tooling.** Electron 44.6.0 supplies Chromium 152 and Node 24.21. Vite builds React under `src/renderer/`; `scripts/build-electron.mjs` builds main, preload and simulation bundles because electron-vite did not support the installed Vite 8. Main owns windows, the `app://wyrnlands` asset protocol, native dialogs and process lifecycle. An Electron utility process owns Engine, database, RNG, clock and saves. The host in `src/sim-host/` is plain Node; Engine imports no Electron, React or DOM APIs. `npm test` remains browser-independent; `test:native` uses Electron's Node to test the production backend.
+
+**Renderer and IPC.** React owns no Engine, DB, RNG or tick loop. Main brokers a MessagePort per page, then renderer and simulation exchange `src/shared/protocol.ts` requests directly: session/save operations, screen-sized views, player commands and notifications. Method allow-lists and parameter validation reject unknown requests and malformed commands; no method accepts SQL. Change domains invalidate relevant views after a batch, with one outstanding request per view. The host clock retains the fixed 200 ms pacing; real time determines when a batch runs, game ticks determine its outcome. Renderer reloads reconnect to the running world; losing the last connection pauses and saves it.
+
+**SQLite choice.** Native `node:sqlite` is built into Electron, with no external addon or ABI rebuild. A small `Database` interface preserves `run`/`query`/`export`/`close`; the native adapter caches prepared statements and mirrors sql.js's 32-bit integer binding. sql.js remains the system-Node test backend and a desktop fallback (`--sim-backend=sqljs`). Schema-22 playable saves validate and migrate in one transaction on both backends. Migration 0024 indexes due actions; it changes no economic outcome.
+
+**Save lifecycle.** `app.getPath('userData')/saves/<id>/{world.sqlite,metadata.json}` holds each save (`%APPDATA%\The Wyrnlands\saves` on Windows). The native `autosave/world.sqlite` is the live database: WAL, `synchronous=NORMAL`, each tick batch and command committed with its RNG state. Autosave checkpoints changed state and refreshes metadata once a real minute. A 64 MB WAL autocheckpoint threshold avoids costly default 4 MB checkpoints; host checkpoints remain. Manual saves, portable exports and ten-minute safety copies use `VACUUM INTO` with atomic replacement. Native dialogs supply paths to main; renderer never supplies filesystem paths. Wall-clock metadata stays outside deterministic state. Loading another life preserves the previous autosave once in `autosave-backup`. Browser IndexedDB saves must first be exported from an older build.
+
+**Shutdown and recovery.** Quit stops the clock, finishes the synchronous batch, persists and closes SQLite before exiting. A process crash preserves the last committed native batch; WAL/NORMAL can lose recent commits on an OS crash or power loss. sql.js fallback recovery reaches only its last exported autosave. A renderer crash reloads; a simulation crash restarts the host and offers Continue. If a damaged native autosave has a periodic safety copy, the damaged file is set aside and the copy restored. That copy can lag by ten minutes of play; portable backups remain useful.
+
+**Security.** Renderer isolation and sandboxing are enabled; Node integration, webviews, permissions, external navigation and new windows are disabled. Production CSP permits same-origin scripts without eval or WebAssembly. Preload exposes only `host`, `versions`, `request`, `onNotification`, `exportSave`, `importSave`. Main checks IPC sender window, top frame and origin. Single-instance locking prevents competing writers. Fuses disable RunAsNode, NODE_OPTIONS and extra file-protocol privileges, and require the integrity-checked ASAR. Inspect arguments remain enabled for packaged smoke tests; disable them for a signed public release. Signing and a custom icon remain release work.
+
+**Measured performance.** The named-player scripted stress workload at 1,095 simulated days retains fingerprint `5d3dfc2e9813e2aa` before and after migration. Pre-migration Node/sql.js took 326 s and 383 MB peak RSS; native file-backed SQLite with one commit per day took 120 s and 157 MB (about 2.7× faster, 59% less harness RSS). In the app at 16×, six recorded renderer long tasks disappeared and maximum frame gap fell from 61 to 12 ms. One-day skipping took 108–138 ms with a maximum frame gap of 6 ms. Early combined memory increases by the added simulation process (~70 MB); long-run native memory stays flat. IPC medians are 0.2–1 ms; the largest recorded view is 8.6 KB. These measurements come from the migration report; methodology and limits are in PERFORMANCE_AUDIT.md §9.
+
+**Scheduling and growth.** Open actions now process only when due through the existing action table and indexed completion ticks. NPC labor, provisioning and strategy keep their aggregate cadences. Follow-up work will schedule operational activities at meaningful boundaries, keep strategic decisions daily/weekly, retain regional LOD and avoid per-minute history. No duplicate action framework or gameplay rewrite is included. Stress storage grows about 80 MB per 365 simulated days, or 26 MB per 120-day game year; provenance and its index dominate. Archival proposals remain in PERFORMANCE_AUDIT.md §6.
+
+**Completion.** Resumed work fixes the constructor's unhandled rejected promise, forwards simulation stdout/stderr into the dev terminal without ending main's streams, and adds lifecycle regressions. Final validation passed: 283 tests on system Node (10 skips), 307 on Electron's Node (one existing skip), typecheck/lint/format/build clean. NSIS builds successfully; final smoke, installer and long-run results are recorded in MigrationPlan.md. The installer is unsigned; migration changes remain in the working tree for review.
+
 ---
 
 ## 2026-10-06 — A persistent, named player life
 
-`Documents/PlayerPlan.md` is implemented as a player architecture slice. The title is now the initial application state; loading sql.js and the IndexedDB index does not instantiate or seed an Engine. New Game opens character creation; Continue, Load Game, Settings, Character, Home, Work/Jobs, Businesses, Settlement, Market, Chronicle, and Save are discoverable.
+**Historical browser implementation.** Player behavior survives the desktop migration; the IndexedDB/GameSession/SaveStore architecture and browser test instructions in this entry are superseded by the desktop entry above. Current UI paths are under `src/renderer/`, and host/persistence code is under `src/sim-host/`.
+
+`Documents/Archive/PlayerPlan.md` was implemented as a player architecture slice. The title became the initial application state; loading sql.js and the IndexedDB index did not instantiate or seed an Engine. New Game opened character creation; Continue, Load Game, Settings, Character, Home, Work/Jobs, Businesses, Settlement, Market, Chronicle, and Save became discoverable.
 
 **Identity and simulation.** `world_meta.player_entity_id` is the controlled-person source of truth. `getPlayerEntityId()` / `isPlayerControlled()` drive second-person narration independently of display name; `isYou()` remains a compatibility alias for existing narrators. `entities.simulation_mode` selects foreground per-tick needs or background NPC cadence. Migration 0023 classifies existing household members as background and the legacy player as foreground. Membership creation takes an explicit mode (default background for NPC creation; Engine preserves foreground for the controlled actor). Needs, NPC labor, household feeding/pooling, job seeking, entrepreneurship, migration, and presence no longer use membership as player identity. Immigration also assigns background mode. Household members are not automatically player-controlled.
 
@@ -172,7 +202,7 @@ In the failure scenario test, a Management-0 baker read 0.5 loaves a day of dema
 
 ## 2026-10-06 (later) — Economy balancing pass (§Stage 5)
 
-Implements the rebalance proposed in [STAGE5_AUDIT.md](./STAGE5_AUDIT.md), then iterated thirteen times against the multi-seed economic report (`npm run sim:perf -- --no-player --econ <prefix>`, five seeds × 730 days per iteration) until the failures stopped being structural. Before: every seed's economy was dead within a year (all businesses closed, every NPC unfed, nobody migrating). After: on four of five seeds all four businesses survive two years — and five, on both seeds run that long — with money flat in steady state, prices moving, and the population settling where the economy can carry it.
+Implements the rebalance proposed in [STAGE5_AUDIT.md](./Archive/STAGE5_AUDIT.md), then iterated thirteen times against the multi-seed economic report (`npm run sim:perf -- --no-player --econ <prefix>`, five seeds × 730 days per iteration) until the failures stopped being structural. Before: every seed's economy was dead within a year (all businesses closed, every NPC unfed, nobody migrating). After: on four of five seeds all four businesses survive two years — and five, on both seeds run that long — with money flat in steady state, prices moving, and the population settling where the economy can carry it.
 
 **What changed (and the finding that forced each):**
 
@@ -202,7 +232,7 @@ Five-year runs (two seeds): 4/4 businesses open, coin ×1.02 and ×0.98, populat
 1. **The first year is lean everywhere.** The seed makes ~45 people; four businesses plus tithe-funded alms carry ~25–30. Expect 20–30% unfed through months 3–14 and an emigration wave (5–9 households) before hunger falls to ~0–6%. The fix is a decision, not a constant: right-size the seeded population (MASTERPLAN §5.3 says 40–80 NPCs), or add labor-absorbing work (construction, more v1 chains).
 2. **A failed farm at start kills the town** (`econ-delta`): nothing can reopen a business. This is the concrete case for NPC-founded businesses / re-opening.
 3. **Immigration never occurs in steady state** — locally unemployed people always fill vacancies first. Emigration waves happen; arrival waves would need growth or labor shortage.
-4. **Storage grows ~65 MB per in-game year** with the scripted player (the economy now moves real goods daily). 38% of `event_log` rows duplicate `provenance_events` (business-scope item events) and 25% are `action.started` — see PERFORMANCE_AUDIT.md §6; not changed here because it alters log content.
+4. **Storage then grew ~65 MB per 365 simulated days** (~21 MB per 120-day game year) with the scripted player. At this snapshot, 38% of `event_log` rows duplicated `provenance_events` and 25% were `action.started`; the balancing pass did not change logging. Later detail suppression and current archival status are recorded in PERFORMANCE_AUDIT.md §6.
 5. Still not built: B2B contracts/freight, seasonal production/prices, market price history, a world chronicle, NPC-founded businesses.
 
 **Verification:** `npm run validate` clean — 116 tests passed / 1 skipped, including new tests for the merchant (imports, stale-glut exports with provenance and audit), spoilage, NPC shift rules (household pay, tool wear, no tool → no shift, Sunday rest, player excluded), parish tithe/alms, Management-weighted restocking and glut awareness, upgrade cooldown, dismissal (never the owner), owner draws, hunger-driven emigration, and famine blocking immigration. Browser smoke test (Playwright): runs at 16×, business view and logs render, zero console errors.
@@ -211,7 +241,7 @@ Five-year runs (two seeds): 4/4 businesses open, coin ×1.02 and ×0.98, populat
 
 ## 2026-10-06 — Long-run performance root-caused and fixed; Stage 5 economy audited (not a stage slice)
 
-Full accounts: [PERFORMANCE_AUDIT.md](./PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./STAGE5_AUDIT.md). This entry records the decisions.
+Full accounts: [PERFORMANCE_AUDIT.md](./PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./Archive/STAGE5_AUDIT.md). This entry records the decisions.
 
 **The "sql.js memory ceiling" was a stack leak in sql.js's `db.exec()`, not heap fragmentation.** sql.js 1.14.1's `exec()` does `stackAlloc(4)` with no `stackSave/stackRestore`, permanently using 16 bytes of the module's fixed 5 MB WASM stack per call; any module dies after ~327,680 `exec()` calls (measured: 327,481 in sql.js's debug build with an explicit stack-overflow abort, 328,904 in the release build as `memory access out of bounds`; the same query through `prepare/step/free` survived 3,000,000 calls). Every engine SELECT went through `exec()`. That one defect explains every symptom recorded since Stage 2 — including why checkpointing to a fresh module "worked". `db/sqlite.ts`'s `queryRows` now uses `prepare/step/free`. Decision: **long runs no longer checkpoint** — a 730-day run completes in one module, and checkpointing now raises RSS (325 MB with 24 checkpoints vs 174 MB without). `checkpointEngine` stays as a tested save/reload facility; its comments, the browser loader's, and the stress test's were rewritten to say so. This also closes the browser gap flagged on 2026-07-18: the leak, not the lack of a fresh-module trick, was the exposure.
 
@@ -368,6 +398,8 @@ Continues slice 1 (same day, see the entry directly below). Still not Stage 5's 
 ---
 
 ## 2026-07-18 — The sql.js memory ceiling, root-caused and fixed (checkpoint/rehydration)
+
+**Superseded diagnosis and workaround.** The later long-run audit traced the failure to sql.js's `exec()` stack leak and fixed the query path. Automatic module replacement is no longer required; checkpoints remain save/reload tests. Production now uses native file-backed SQLite. The investigation below is retained as history, not a recommendation to restore browser checkpointing.
 
 Not a stage — an infrastructure fix for the constraint flagged since Stage 2 (30→12 days), hit again by Stage 3's own scenario at first, and forced Stage 4's exit test down to 20 days. Root-caused and fixed at the source rather than worked around again, at the user's explicit request ("ensure a real fix... I trust your judgement").
 
@@ -621,6 +653,8 @@ Not a MASTERPLAN.md module — a tooling/dependency audit of the whole project, 
 ---
 
 ## 2026-07-14 — Project scaffold (Stage 0, partial)
+
+**Historical scaffold.** The browser bootstrap, `/sql-wasm.wasm`, direct React/UiApi relationship and empty-module descriptions below apply to the initial build. Electron now supplies the host; React uses the typed bridge, and the packaged sql.js fallback resolves WASM inside the simulation process. Current paths and commands are in the project README.
 
 **What was built:**
 - Vite + React 19 + TypeScript shell (`npm run dev` / `npm run build`), Vitest for headless engine tests (`npm test`).

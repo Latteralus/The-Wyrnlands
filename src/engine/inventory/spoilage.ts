@@ -2,8 +2,8 @@ import { queryRows } from '../db/sqlite';
 import { listGoodDefinitions } from '../goods/catalog';
 import { MINUTES_PER_DAY } from '../time/clock';
 import { destroyItem } from './items';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // §7.1 "Perishability is first-class (grain keeps months; bread spoils in
 // days)" and §8.1 rule 1 ("spoilage and wear are the only destruction").

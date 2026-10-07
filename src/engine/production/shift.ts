@@ -1,7 +1,7 @@
 import { consumeActiveItems, countActiveItemsOfType, produceItem } from '../inventory/items';
 import { planShift, type Recipe } from './recipes';
+import type { Database } from '../db/sqlite';
 import type { EventBus, EventScope } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // One worker's shift of production at a company (§9.1): consume input on
 // hand (whole batches only), produce output into the company's own stock.

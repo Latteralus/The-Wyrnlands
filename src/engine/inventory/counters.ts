@@ -1,5 +1,5 @@
 import { queryRow } from '../db/sqlite';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // Running totals stored on world_meta (migration 0004). The conservation
 // audit's whole job is comparing these against what the live tables

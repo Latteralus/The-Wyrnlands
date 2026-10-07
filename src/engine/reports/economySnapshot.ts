@@ -9,7 +9,7 @@ import { MAX_SCARCITY_MULTIPLIER } from '../market/pricing';
 import { CHARITY_THRESHOLD, RESERVE_HEALTHY_THRESHOLD } from '../population/cadence';
 import { getRecipeForSkill } from '../production/recipes';
 import { MANAGEMENT_SKILL, getLevel } from '../skills/skills';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // §17 "Balance harness": a read-only statistical picture of the economy at
 // one moment (plus flows over a trailing window), so long runs can be judged

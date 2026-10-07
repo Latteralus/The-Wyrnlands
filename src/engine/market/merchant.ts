@@ -7,8 +7,8 @@ import { MINUTES_PER_DAY } from '../time/clock';
 import { recordMarketActivity } from './activity';
 import { recordMarketFlow } from './history';
 import { listAllMarketListings, marketStockContainerId, type MarketListing } from './market';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // The travelling merchant: the settlement's link to the outside economy
 // (§8.1 rule 2's import sink / export faucet; §8.2 "merchant imports

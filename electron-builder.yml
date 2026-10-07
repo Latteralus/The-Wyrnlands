@@ -1,0 +1,41 @@
+# Desktop packaging (npm run package → release/win-unpacked; npm run package:installer → NSIS installer).
+appId: com.wyrnlands.game
+productName: The Wyrnlands
+copyright: Copyright © 2026 The Wyrnlands
+directories:
+  output: release
+  buildResources: build
+files:
+  - dist/**
+  - dist-electron/**
+  - '!dist-electron/**/*.map'
+  - package.json
+  # sql.js (the --sim-backend=sqljs fallback) needs only its Node build.
+  - '!node_modules/sql.js/**'
+  - node_modules/sql.js/package.json
+  - node_modules/sql.js/dist/sql-wasm.js
+  - node_modules/sql.js/dist/sql-wasm.wasm
+afterPack: scripts/after-pack.cjs
+# Production dependencies (sql.js) ship inside app.asar; the app reads from
+# it through Electron's asar support. Saves are written under the user's
+# application-data directory, never inside the installed app.
+electronDist: node_modules/electron/dist
+asar: true
+# Electron fuses: switch off ways of repurposing the shipped binary.
+# EnableNodeCliInspectArguments stays on so the packaged smoke test
+# (scripts/electron-smoke.mjs --packaged) can drive the real executable;
+# turn it off for a signed public release.
+electronFuses:
+  runAsNode: false
+  enableCookieEncryption: true
+  enableNodeOptionsEnvironmentVariable: false
+  enableNodeCliInspectArguments: true
+  enableEmbeddedAsarIntegrityValidation: true
+  onlyLoadAppFromAsar: true
+  grantFileProtocolExtraPrivileges: false
+win:
+  target:
+    - nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

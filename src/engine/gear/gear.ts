@@ -2,8 +2,8 @@ import { queryRow, queryRows } from '../db/sqlite';
 import { getEntityName, isYou } from '../entities';
 import { getGoodDefinition, type GearSlot } from '../goods/catalog';
 import { destroyItem, getItem } from '../inventory/items';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export interface WornGear {
   slot: GearSlot;

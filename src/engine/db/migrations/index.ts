@@ -21,6 +21,7 @@ import { migration_0020_business_founding } from './0020_business_founding';
 import { migration_0021_autonomous_routines } from './0021_autonomous_routines';
 import { migration_0022_market_activity } from './0022_market_activity';
 import { migration_0023_player_experience } from './0023_player_experience';
+import { migration_0024_due_actions_index } from './0024_due_actions_index';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -51,4 +52,5 @@ export const migrations: Migration[] = [
   migration_0021_autonomous_routines,
   migration_0022_market_activity,
   migration_0023_player_experience,
+  migration_0024_due_actions_index,
 ];

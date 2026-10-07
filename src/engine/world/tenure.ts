@@ -1,8 +1,8 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { getBalance, sinkCoin } from '../inventory/wallet';
 import { getSite, listSitesByKind, type Site } from './sites';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Land and site access (§5.1, §12, Stage 6's "buy/rent plots"). Who may work
 // a parcel, and on what terms — the one ownership/access rule NPC companies

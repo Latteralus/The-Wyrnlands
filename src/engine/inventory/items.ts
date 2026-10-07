@@ -3,7 +3,7 @@ import { withOptional } from '../optional';
 import { incrementGoodsCreated, incrementGoodsDestroyed } from './counters';
 import type { EventBus, EventScope } from '../eventBus';
 import type { DestructionReason, Item, ProvenanceEvent, ProvenanceEventType } from './types';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 function rowToItem(row: unknown[]): Item {
   return {

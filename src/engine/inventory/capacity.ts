@@ -1,6 +1,6 @@
 import { queryRows } from '../db/sqlite';
 import { getGoodDefinition } from '../goods/catalog';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // Placeholder tuning (§14.2 "inventory (weight-limited)") — a person can
 // reasonably carry about this much on their back without a cart. Revisit

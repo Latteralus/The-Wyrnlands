@@ -16,8 +16,8 @@ import { getSite } from '../world/sites';
 import { acquireSiteTenure, isSiteAvailable, tenureTerms, type TenureKind } from '../world/tenure';
 import { getBusinessType, type BusinessType } from './businessTypes';
 import { createCompany, getCompany, recordLedgerEntry, setCompanyOwner } from './companies';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Founding a company (§9.1; Stage 6's "found a company") — the one way a new
 // business comes into existence during play, whoever founds it: an NPC

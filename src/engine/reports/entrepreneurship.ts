@@ -5,7 +5,7 @@ import { getEntityName } from '../entities';
 import { getBalance } from '../inventory/wallet';
 import { countActiveEmploymentsForSlot, listJobSlotsForCompany } from '../jobs/jobs';
 import { MINUTES_PER_DAY } from '../time/clock';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // Business churn over a run (§17 balance harness): which businesses the
 // world started with, which were founded during play — by whom, with how

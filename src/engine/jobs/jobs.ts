@@ -1,8 +1,8 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { getEntityName } from '../entities';
 import { addXp, getSuccessChance, TRADING_SKILL } from '../skills/skills';
+import type { Database } from '../db/sqlite';
 import type { EventBus, EventScope } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // §9.8 job slots: openings (wage band, hours, skill ask, employer,
 // equipment quality — §14.2 Jobs screen). id is code-assigned (see the

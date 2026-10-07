@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { rmSync, writeFileSync } from 'node:fs';
 import { registerGameActions } from '../actions/gameActions';
-import { createDatabase, queryRow, queryRows } from '../db/sqlite';
+import { createDatabase, queryRow, queryRows, type Database } from '../db/sqlite';
+import { NativeDatabase } from '../db/sqlite.native';
 import { loadFreshSqlJs, loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { getGoodDefinition } from '../goods/catalog';
@@ -16,6 +17,7 @@ import { collectEntrepreneurshipReport, formatEntrepreneurshipReport } from '../
 import { runScriptedPlayerUntil } from '../scenarios/scriptedPlayer';
 import { seedDemoWorld } from '../seed/demoWorld';
 import { MINUTES_PER_DAY } from '../time/clock';
+import { canonicalState } from './benchmark';
 import { PhaseTimer } from './phaseTimer';
 import { attachSqlProfiler, type SqlProfiler, type SqlStat } from './sqlProfiler';
 import type { PhaseStat } from './phaseTimer';
@@ -44,6 +46,14 @@ import type { PhaseStat } from './phaseTimer';
 //   --econ PREFIX     also collect an economy snapshot (reports/
 //                     economySnapshot.ts) every sample; writes PREFIX.csv
 //                     and PREFIX.json
+//   --backend B       sqljs (default) or native (node:sqlite — needs Node
+//                     22.16+/24, e.g. npm run sim:perf:electron)
+//   --db-file FILE    native only: run on a file-backed database (WAL), as
+//                     the desktop game does; otherwise in memory
+//   --commit day      one transaction per simulated day (the game commits
+//                     once per batch of ticks); default: whatever each
+//                     engine call commits — every scripted action is its
+//                     own transaction
 //
 // Every run ends by printing a logical state fingerprint (a hash over
 // wallets, items, employment, companies, households, needs, listings, row
@@ -62,6 +72,9 @@ interface Options {
   top: number;
   out: string | null;
   econ: string | null;
+  backend: 'sqljs' | 'native';
+  dbFile: string | null;
+  commitPerDay: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -76,6 +89,9 @@ function parseArgs(argv: string[]): Options {
     top: 8,
     out: null,
     econ: null,
+    backend: 'sqljs',
+    dbFile: null,
+    commitPerDay: false,
   };
   for (let i = 0; i < argv.length; i++) {
     const flag = argv[i];
@@ -115,6 +131,21 @@ function parseArgs(argv: string[]): Options {
       case '--econ':
         opts.econ = next();
         break;
+      case '--backend': {
+        const backend = next();
+        if (backend !== 'sqljs' && backend !== 'native') throw new Error(`Unknown backend: ${backend}`);
+        opts.backend = backend;
+        break;
+      }
+      case '--db-file':
+        opts.dbFile = next();
+        break;
+      case '--commit': {
+        const unit = next();
+        if (unit !== 'day') throw new Error(`Unknown commit unit: ${unit}`);
+        opts.commitPerDay = true;
+        break;
+      }
       default:
         throw new Error(`Unknown flag: ${flag}`);
     }
@@ -169,39 +200,32 @@ function dbBytes(engine: Engine): number {
 
 const mb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
 
-// Calls engine.export() first so world_meta.rng_state is current.
+// The logical-state fingerprint (perf/benchmark.ts's canonicalState(): RNG
+// state synced first).
 function stateFingerprint(engine: Engine): string {
-  engine.export();
-  const hash = createHash('sha256');
-  const canonical = [
-    'SELECT owner_id, balance FROM wallets ORDER BY owner_id',
-    'SELECT id, type, quality_tier, container_id, status, durability, destroyed_at_tick FROM items ORDER BY id',
-    'SELECT entity_id, job_slot_id, wage, hired_at_tick, status, terminated_at_tick FROM employment ORDER BY id',
-    'SELECT id, owner_id, insolvent_since_tick, tier, closed_at_tick FROM companies ORDER BY id',
-    'SELECT id, destitute_since_tick, departed_at_tick FROM households ORDER BY id',
-    'SELECT entity_id, ROUND(hunger, 6), ROUND(thirst, 6), ROUND(energy, 6), ROUND(warmth, 6) FROM needs ORDER BY entity_id',
-    'SELECT entity_id, skill, xp FROM skills ORDER BY entity_id, skill',
-    'SELECT site_id, good_type, price, quantity, producer_company_id FROM market_listings ORDER BY site_id, good_type',
-    'SELECT (SELECT COUNT(*) FROM event_log), (SELECT COUNT(*) FROM provenance_events), (SELECT COUNT(*) FROM actions), (SELECT COUNT(*) FROM company_ledger_entries)',
-    'SELECT tick, rng_state, goods_created, goods_destroyed, coin_faucet_total, coin_sink_total FROM world_meta',
-  ];
-  for (const sql of canonical) hash.update(JSON.stringify(queryRows(engine.db, sql)));
-  return hash.digest('hex').slice(0, 16);
+  return createHash('sha256').update(canonicalState(engine)).digest('hex').slice(0, 16);
 }
 
 async function main(): Promise<void> {
   const opts = parseArgs(process.argv.slice(2));
   console.log(
-    `Long-run harness: ${opts.days} days, sample every ${opts.sampleDays}, checkpoint every ${opts.checkpointDays || 'never'}, seed "${opts.seed}", player ${opts.player ? 'scripted' : 'none'}, profiling ${opts.profile ? 'on' : 'off'}`,
+    `Long-run harness (${opts.backend}${opts.dbFile ? ` file ${opts.dbFile}` : ''}, Node ${process.versions.node}${opts.commitPerDay ? ', one commit per day' : ''}): ${opts.days} days, sample every ${opts.sampleDays}, checkpoint every ${opts.checkpointDays || 'never'}, seed "${opts.seed}", player ${opts.player ? 'scripted' : 'none'}, profiling ${opts.profile ? 'on' : 'off'}`,
   );
 
   const SQL = await loadSqlJs();
+  if (opts.dbFile && opts.backend !== 'native') throw new Error('--db-file needs --backend native');
+  if (opts.dbFile)
+    for (const suffix of ['', '-wal', '-shm']) rmSync(`${opts.dbFile}${suffix}`, { force: true });
+  const openDatabase = (): Database =>
+    opts.backend === 'sqljs'
+      ? createDatabase(SQL)
+      : new NativeDatabase(opts.dbFile ?? ':memory:', { durable: opts.dbFile !== null });
   let engine = opts.namedPlayer
-    ? createNewGame(createDatabase(SQL), {
+    ? createNewGame(openDatabase(), {
         world: { seed: opts.seed },
         character: { firstName: 'Edda', lastName: 'Hale', preset: 'standard' },
       })
-    : Engine.bootstrap(createDatabase(SQL), { seed: opts.seed });
+    : Engine.bootstrap(openDatabase(), { seed: opts.seed });
   if (!opts.namedPlayer) seedDemoWorld(engine);
 
   const phaseTimer = new PhaseTimer();
@@ -222,7 +246,10 @@ async function main(): Promise<void> {
     const day = Math.min(sampleIndex * opts.sampleDays, opts.days);
     const intervalDays = day - (samples.at(-1)?.day ?? 0);
     const intervalStart = performance.now();
-    runScriptedPlayerUntil(engine, day * MINUTES_PER_DAY, { player: opts.player });
+    runScriptedPlayerUntil(engine, day * MINUTES_PER_DAY, {
+      player: opts.player,
+      commitDaily: opts.commitPerDay,
+    });
     const intervalMs = performance.now() - intervalStart;
 
     // Read the profilers before the measurement queries below pollute them.
@@ -266,7 +293,12 @@ async function main(): Promise<void> {
       const exportMs = performance.now() - exportStart;
       const reloadStart = performance.now();
       engine.dispose();
-      engine = Engine.bootstrap(createDatabase(await loadFreshSqlJs(), exported), { seed: opts.seed });
+      engine = Engine.bootstrap(
+        opts.backend === 'sqljs'
+          ? createDatabase(await loadFreshSqlJs(), exported)
+          : NativeDatabase.fromBytes(exported),
+        { seed: opts.seed },
+      );
       registerGameActions(engine); // registration only; checkpoints never seed world content
       const reloadMs = performance.now() - reloadStart;
       instrument(engine);

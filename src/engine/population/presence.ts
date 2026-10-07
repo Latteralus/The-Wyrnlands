@@ -2,7 +2,7 @@ import { getCompany } from '../companies/companies';
 import { getEntityName } from '../entities';
 import { getActiveEmployment, getJobSlot } from '../jobs/jobs';
 import { getHousehold, getHouseholdIdForMember, listAllHouseholdMemberIds } from './households';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export interface PresentEntity {
   entityId: string;

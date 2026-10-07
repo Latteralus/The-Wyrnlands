@@ -1,6 +1,6 @@
 import { migrations } from './migrations';
 import { queryRows } from './sqlite';
-import type { Database } from 'sql.js';
+import type { Database } from './sqlite';
 
 export function applyMigrations(db: Database): string[] {
   // No wall-clock timestamp here: same DB + same seed must export identical

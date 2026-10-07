@@ -1,13 +1,17 @@
 # Performance Audit — long-run simulation
 
-**Date:** 2026-10-06 · **Scope:** why long headless runs slowed down and crashed as world history grew, what was fixed, and what remains.
-**Bottom line:** two distinct defects explained every historical symptom. Both are fixed. The original 730-day stress scenario now completes in **~155–165 s** in a single sql.js module with **no checkpointing**, flat per-day cost, every nightly conservation audit passing, and a deterministic final state. (It previously reached day 301 in 30 minutes and timed out.)
+**Current reference:** [§9 — Desktop migration](#9-desktop-migration--2026-10-06) records Electron/native SQLite performance and validation. Sections 1–5, 7–8 and the player follow-up retain historical browser/sql.js measurements; §6 tracks which proposals remain after later changes. The calendar has 120 days per game year; 365-day sampling intervals are benchmark intervals, not calendar years. Current setup and commands are in [the project README](../README.md).
 
-All numbers below were measured with the new harness (`npm run sim:perf`), seed `stage5-scale-stress` (the seed the original stress test used), on the same Windows 11 / Node machine. Nothing is extrapolated unless marked as such.
+**Date:** 2026-10-06 · **Scope:** why long headless runs slowed down and crashed as world history grew, what was fixed, and what remains.
+**Historical result:** two defects explained the early slowdown/crashes. After fixing them, the then-current 730-day stress scenario completed in **~155–165 s** in a single sql.js module with no checkpointing, flat per-day cost, passing nightly audits and deterministic state. These timings predate later economic/player changes and are not the current Electron benchmark. It previously reached day 301 in 30 minutes and timed out.
+
+Measurements in each section belong to its stated code/workload and runtime. The original audit used the sql.js harness, seed `stage5-scale-stress`, on Windows 11/system Node; §9 distinguishes native/file-backed and renderer measurements. Estimated future scheduling costs are not part of these measured results.
 
 ---
 
-## 1. Current architecture (as found)
+## 1. Historical browser architecture (as found before the fixes)
+
+This is the audit's original snapshot. Player identity is now independent of household membership, NPC labor runs daily, detailed bus events can be omitted from the log, due-action indexing is implemented, and production persistence is native/file-backed. See §9 and the current source; the snapshot below is retained to explain the original defects.
 
 **Ticks.** `Engine.advanceTicks(n)` runs `n` one-minute ticks inside one SQL transaction. Each tick (`stepOneTick`): read+write `world_meta.tick`; per-tick needs decay for *foreground* entities only (anyone not in `household_members` — in practice just the player); per-tick action-queue processing for every actor with an open action.
 
@@ -71,7 +75,7 @@ Historical context (from DECISIONS.md): the 730-day stress run reached day 301 i
 - `queryLog(scope)`: `ORDER BY id DESC` with only a `(scope, tick)` index → `USE TEMP B-TREE FOR ORDER BY` — a sort of the scope's *entire* history on every call. The UI's `LogPanel` calls this on every render.
 
 ### Medium — storage growth (write amplification), not a speed problem at 2 years
-After 730 days `event_log` holds ~212,000 rows and the DB is ~47 MB. Inserts stay ~35 µs (B-tree, log n), so this does not slow the simulation. But the database grows ~23 MB/in-game year — which matters for browser memory, save-file size and IndexedDB autosave over *generations*. Sources: the scripted player's `action.started`/`action.completed` pairs dominate; item `produced/transferred/consumed` events duplicate `provenance_events`.
+After 730 days the historical `event_log` held ~212,000 rows and the DB was ~47 MB. Inserts stayed ~35 µs (B-tree, log n). Growth was ~23 MB per 365 simulated days (~7.6 MB per 120-day game year), relevant to the old browser memory/save model. At that time, scripted `action.started`/`action.completed` pairs dominated and item movement events duplicated provenance. Later logging changes suppress bookkeeping details; current growth is measured in §9.6.
 
 ### Medium — goods duplication in the market (correctness, with a growth side-effect)
 Nothing ever moved an item *out* of a market's stock container. Every purchase conjured a new item for the buyer while the producer's sold units stayed in `market-stock` forever: duplicated goods, active items growing without bound (2,797 at day 90), and broken provenance (a household's loaf never traced to the bakery). It also misallocated money (§4.4). Not a speed problem at 2 years; a pillar-1 correctness problem.
@@ -144,24 +148,22 @@ Same seed, 730 days: no checkpoints → fingerprint `6a9b0d35194aed9d`; checkpoi
 
 ---
 
-## 6. Remaining items and proposals
+## 6. Proposal status and remaining storage work
 
-**Safe / local (not done; low value now)**
-- Cache `world_meta.tick` in memory (write-through) — removes 2 of ~7 per-tick statements.
-- A per-DB prepared-statement cache for hot queries. Must be invalidated on `export()` (sql.js frees every statement on export/close).
+The original sql.js audit proposed several optimizations. Their status after later economy work and the desktop migration is:
 
-**Archival / history (recommended before multi-generation runs)**
-DB growth is ~23 MB per in-game year with this workload. Options, least invasive first:
-1. Stop writing item `produced/transferred/consumed` events for `business` scope to `event_log` — `provenance_events` already records them (the bus emit can stay for live listeners). Business-log screens would read provenance instead.
-2. Don't persist `action.started` (the `actions` table already records start ticks).
-3. Year-end compaction: move `event_log` rows older than N in-game years for `personal`/`business` scopes into an `event_archive` table (or a summary) — still queryable for chronicles/debugging; `settlement`/`world` scopes (the chronicle) kept in place.
-4. Consumed/destroyed items + their provenance could likewise move to archive tables; active-state queries already use status-leading or partial indexes, so this is about file size, not speed.
+| Proposal | Current status |
+|---|---|
+| Cache `world_meta.tick` | Not implemented; reassess against current native profiles before changing engine state handling |
+| Prepared-statement cache | Implemented in `sqlite.native.ts` with a bounded cache; sql.js still prepares/frees through its adapter |
+| Suppress duplicated item movement log rows | Implemented through `EngineEvent.detail` and `logs/logger.ts`; economic provenance remains in `provenance_events` |
+| Suppress routine `action.started` bookkeeping | Implemented for starts without an authored start message; meaningful start narration can still be persisted |
+| Archive old personal/business history | Not implemented; consider an archive table or queryable summary policy before multi-generation saves |
+| Archive destroyed/consumed items and old provenance | Not implemented; preserve provenance queryability and conservation when designing it |
 
-None of these is needed for 2-year runs; all preserve "history is append-only and queryable."
+Native/file-backed SQLite is the production backend; sql.js remains for headless tests, portability comparisons and fallback. The old recommendation to keep the browser-only save model is superseded. Browser bootstrap helpers are legacy/benchmark tooling, not a production renderer dependency.
 
-**sql.js suitability.** Keep it. After avoiding `exec()`, one module handled 1M+ ticks and 7M+ statements at flat per-statement cost, and the offline/browser single-file save model is intact. Native SQLite for headless would be faster per statement but isn't needed and would split the codepath.
-
-**Browser.** The stack leak was the browser's real exposure and is fixed for every platform. `sqlite.browser.ts`'s non-working `loadFreshSqlJs` is no longer needed for long sessions. Not yet verified with a multi-hour real browser session.
+Current stress growth is ~80 MB per 365 simulated days (~26 MB per 120-day game year), dominated by provenance/items (§9.6). More RAM and a disk-backed DB do not eliminate snapshot or storage costs. Future archival must retain meaningful history, portable save compatibility and deterministic outcomes; no archive tables or retention policy were added in the migration.
 
 ---
 
@@ -173,7 +175,7 @@ None of these is needed for 2-year runs; all preserve "history is append-only an
 | Saves | New migrations on old saves | 0017 adds indexes only. 0018 adds a table and backfills consignments from provenance; unmatched old stock is treated as merchant-owned (previous behavior). |
 | Conservation | Market change moves goods differently | Unit tests assert goods are moved not duplicated and coin per unit goes to the right party; nightly audit passed every day of every run. |
 | Provenance | Chains now longer for local goods | Tests updated to the truthful shape: `produced → transferred* → consumed`. |
-| Gameplay | Market fix stops paying the bakery for merchant-import bread | Intended (it was revenue for goods it never made). This and the wage fix change economic outcomes — see `STAGE5_AUDIT.md`. |
+| Gameplay | Market fix stops paying the bakery for merchant-import bread | Intended (it was revenue for goods it never made). This and the wage fix change economic outcomes — see [the historical Stage 5 audit](./Archive/STAGE5_AUDIT.md). |
 | Checkpoint | Still relied on by tests | Still correct and deterministic; just no longer needed for memory. |
 
 ---
@@ -194,16 +196,83 @@ The balancing pass (DECISIONS.md) made the economy physically busy: NPCs work da
 
 Speed is still flat with history: no per-tick or per-day work grows with accumulated rows. Determinism holds: identical fingerprint over 360 days with and without 12 checkpoints.
 
-**Storage is now the leading long-run cost** at ~65 MB per in-game year. The day-730 `event_log` breakdown:
+**Storage was the leading long-run cost in this snapshot**, at ~65 MB per 365 simulated days (~21 MB per 120-day game year). The then-current day-730 `event_log` breakdown:
 - `action.started` / `action.completed`: 106k each (the scripted player);
 - business-scope `item.transferred` / `item.produced` / `item.consumed` / `item.exported`: 161k combined (38% of rows), each duplicating a `provenance_events` row.
 
-§6's archival options 1 and 2 would remove about 60% of event rows without losing any provenance; they were not applied in the balancing pass because they change log content. Recommended before multi-generation runs or browser autosave.
+At that time, suppressing bookkeeping item/action events was estimated to remove about 60% of log rows without losing provenance. It was not applied in the balancing pass, but later storytelling/log changes implemented detail suppression; §6 records current status. Old-row archival remains future work.
 
-## Player experience follow-up — 2026-10-06
+## Historical player experience follow-up — 2026-10-06, before Electron
 
 Foreground simulation now selects `entities.simulation_mode`, independently of household membership. The new named player belongs to a household without entering coarse NPC feeding/wages/needs. Background immigration and NPC cadence retain their explicit mode.
 
-PlayerPlan validation ran 730 days with a real player household both continuously and with a fresh-module checkpoint at day 365. Both reached tick 1,051,200, zero failed nightly audits, and fingerprint `a04078a6373f24b4`. Runtime was 217.3 s continuous and 224.1 s checkpointed (other validation processes overlapped); interval cost stayed about 295–310 ms/day rather than increasing with history. Final DB size was 162.3 MB under the deliberately busy scripted-player stress workload. Exports measured about 41 ms at 80.8 MB; earlier sampling observed 21 ms at 40 MB and 90 ms at 160 MB. Browser autosave runs once a real minute when state changed, plus safe transitions; it never serializes each tick. History growth/archival remains follow-up work.
+The original [player plan](./Archive/PlayerPlan.md) validation ran 730 days with a real player household both continuously and with a fresh-module checkpoint at day 365. Both reached tick 1,051,200, zero failed nightly audits, and fingerprint `a04078a6373f24b4`. Runtime was 217.3 s continuous and 224.1 s checkpointed (other validation processes overlapped); interval cost stayed about 295–310 ms/day. Final DB size was 162.3 MB. sql.js exports measured about 41 ms at 80.8 MB; earlier sampling observed 21 ms at 40 MB and 90 ms at 160 MB. The browser autosave then serialized changed state once a real minute and at safe transitions. Native desktop autosave now checkpoints the live file instead; §9 and [current player validation](./PLAYER_VALIDATION.md) record that behavior.
 
 The harness now supports `--named-player` and processes a final partial sample. Previously `--days 730 --sample 180` actually stopped at day 720 while labeling its result as 730 days. The corrected 730-day results above use `--sample 365`; older measurements should be interpreted by their final tick/sample, not only the requested duration.
+
+---
+
+## 9. Desktop migration — 2026-10-06
+
+### 9.1 Method and behavioral baseline
+
+The paused migration report in `MigrationPlan.md` records measurements on one Windows 11 machine (24 threads, 32 GB). The busiest workload is a named-player world, seed `stage5-scale-stress`, with the scripted player, no SQL profiling, 1,095 simulated days sampled at days 365, 730 and 1,095. These samples cover about nine 120-day game years. They must not be interpreted as three game years. Totals and memory below are the recorded migration measurements; fresh completion checks are tracked separately in MigrationPlan.md.
+
+Pre-migration validation passed 253 tests with one skip. Long-run logical fingerprint `5d3dfc2e9813e2aa` matches all five backend/host configurations below, with nightly conservation audits passing. Native binding preserves sql.js integer behavior, and ordered queries and RNG consumption remain unchanged. The browser/renderer comparisons at 365 days agree on `56ccb03711d3a18e`; world-only runs agree on `d6ba890fc120ce8d`.
+
+### 9.2 Headless throughput and memory
+
+| Configuration | ms/day, intervals ending at 365 / 730 / 1,095 days | Total | Peak RSS |
+|---|---|---|---|
+| Before migration: system Node 22, sql.js | 298 / 299 / 297 | 326 s | 383 MB |
+| After migration: system Node 22, sql.js | 299 / 306 / 297 | ~330 s | 389 MB |
+| Electron's Node 24, sql.js | 295 / 265 / 264 | ~300 s | 378 MB |
+| Electron's Node 24, native in memory | 61 / 55 / 56 | ~63 s | 382 MB |
+| Electron's Node 24, native file-backed, one commit/day | 104 / 108 / 116 | 120 s | 157 MB, flat |
+
+The production-backend harness is about 2.7× faster than the original Node/sql.js baseline, with 59% less peak RSS. Native in-memory runs are faster but retain the growing database in process memory; they are not the game's save configuration. After migration, sql.js on system Node is essentially unchanged: moving hosts preserved behavior rather than concealing an economic rewrite.
+
+In Chromium, the previous renderer-owned engine took 259 ms/day in Electron and 270 ms/day in system Chrome over 365 days. World-only (`econ-alpha`, no scripted player) took 173 ms/day before migration on sql.js and 74 ms/day on native file-backed SQLite, with matching fingerprints.
+
+### 9.3 Running-app responsiveness
+
+`npm run bench:app` drives a fresh game for 20 real seconds at each speed, then measures one-day skipping and IPC. Phase 1 ran simulation in the renderer; the final app uses the utility process and native SQLite.
+
+| Measure | Renderer-owned simulation | Final desktop architecture |
+|---|---|---|
+| Renderer long tasks at 16× | 6; 356 ms total, maximum 66 ms | 0 |
+| Maximum frame gap at 16× | 61 ms | 12 ms |
+| Skip to morning, one day | 184–215 ms; window frozen up to 189 ms | 108–138 ms; maximum frame gap 6 ms |
+| Game minutes/s at 1× / 4× / 16× | 25 / 100 / 402 | 24.8 / 99.8 / 400 |
+| Tab-switch median | 43 ms | 47–58 ms |
+| Early-game memory | Renderer 163–173 MB | Renderer 173–177 MB plus simulation 66–74 MB |
+
+The measurable benefit is a responsive renderer during simulation and skips; tab switching is not faster. Early-game combined memory rises by roughly one Node process. The long-run harness shows why file-backed SQLite helps later: simulation memory stays flat while the database grows on disk. Renderer/app totals and harness RSS are different measures and must not be compared as if they were the same process. The harness's daily commits approximate batching for throughput comparisons; the actual clock commits each 200 ms batch. These figures do not predict tick throughput on every machine or at future NPC scale.
+
+### 9.4 IPC
+
+Renderer → simulation → renderer median round trips were 0.2–1 ms. Recorded payload sizes: HUD 0.5 KB, character 8.6 KB, business 7.8 KB, settlement 5.5 KB; tick notifications under 400 bytes. Screen-sized snapshots and domain invalidations avoid per-field calls. Each view keeps one request in flight, preventing accumulating requests while a batch runs.
+
+### 9.5 Windows commits and WAL checkpoints
+
+A file-backed commit measured about 0.6 ms on the test machine. The default WAL autocheckpoint (~4 MB) made daily commits average 69 ms including checkpoint work. Raising it to 16,384 pages (~64 MB at the default 4 KB page size), with explicit host checkpoints on each changed autosave and orderly close, brought world-only native runs from 181 to 74 ms/day. WAL uses `synchronous=NORMAL`: a process crash preserves committed batches, but power loss or an OS crash can lose recent commits. This setting was chosen for the measured write cost and is not a claim of power-loss durability.
+
+The scripted harness normally commits per player action, about 240 times/day. `--commit day` wraps that work in one daily transaction for the file-backed comparison; omitting it measures a much heavier commit workload than the app. Fresh-module checkpoint/reload benchmarks also need careful interpretation: native rehydration in the harness uses `NativeDatabase.fromBytes`, switching to an in-memory database; it does not reopen the original live save file.
+
+### 9.6 Storage and follow-up
+
+Stress database sizes at days 365 / 730 / 1,095 were 80.8 / 162.3 / 240.9 MB; world-only was 66.7 MB at day 365. The stress rate is roughly 80 MB per 365 simulated days, or 26 MB per game year. Provenance and its index account for ~50%, items ~23%, event_log ~13%, actions ~8%. SQLite removes the WASM memory ceiling but leaves disk growth, snapshot cost and archival work.
+
+No per-minute NPC history was added. Current state, economically meaningful provenance, readable history and ephemeral presentation remain distinct. Detail suppression predates the migration; §6's remaining old-row archival proposals were not implemented here. The native statement cache is implemented.
+
+Due-driven action processing and migration 0024 skip actors whose open action is not ready; all recorded fingerprints remain unchanged. Scheduled NPC shifts, actual location presence, errands and travel remain follow-up work in `Archive/ScheduledActivityPlan.md`; strategy keeps its daily/weekly cadence and distant settlements retain aggregation. The follow-up must measure behavior and balance anew because moving completion times changes RNG order.
+
+### 9.7 Completion validation
+
+Resumed baseline validation stopped at an existing formatting issue in the late `sqlite.native.ts` change. After formatting and the startup/logging fixes, `npm run validate` passed typecheck, lint, formatting, both suites and the build: system Node 283 passed/10 skipped; Electron's Node 307 passed/one existing skip. Four new tests cover idle startup without an unhandled rejection, readiness and output forwarding, fatal initialization, and a fresh readiness promise on restart. Native-only skips on system Node reflect runtime capabilities; they execute on Electron's Node.
+
+The built, packaged and NSIS-installed applications each pass the full GUI smoke flow on both backends (six runs), including saves, export/import, relaunch and forced process termination. The real dev launcher loads Vite, forwards simulation output and has no startup rejection. Temporary NSIS installation and uninstall both exit 0; test files and registration are removed.
+
+Completion runs reach 1,095 days on native file-backed SQLite continuously and on sql.js with fresh-module checkpoints at days 365 and 730. Both have zero failed nightly audits, final tick 1,576,800, conserved goods 1,269 and coin 60,414, and fingerprint `5d3dfc2e9813e2aa`. Native takes 119.0 s with ~157 MB sampled RSS; checkpointed sql.js takes 349.6 s and reaches 546.6 MB RSS, consistent with §5's repeated-WASM-module overhead. Other checks overlapped these reruns; §9.2 remains the controlled migration comparison. Reports and commands are described in MigrationPlan.md.
+
+Packaging is unsigned, uses the default icon and retains inspect arguments for automation; public release hardening remains separate.

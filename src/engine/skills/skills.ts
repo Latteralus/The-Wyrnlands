@@ -1,38 +1,19 @@
 import { queryRow, queryRows } from '../db/sqlite';
-import type { Database } from 'sql.js';
+import { MAX_SKILL_LEVEL, XP_PER_LEVEL } from './skillLevels';
+import type { Database } from '../db/sqlite';
 
-// v1 skill list (§13.2). This module is generic over any skill name, so
-// trade skills slot in without a schema change — these are just the named
-// constants in use so far, typo-safety over an enum.
-export const LABOR_SKILL = 'labor';
-export const FARMING_SKILL = 'farming';
-export const TRADING_SKILL = 'trading'; // §9.8/§13.2: margins + haggling
-export const WOODCUTTING_SKILL = 'woodcutting';
-export const MANAGEMENT_SKILL = 'management'; // §9.2: business owners' skill
-export const MILLING_SKILL = 'milling'; // §Stage 5: grain -> flour
-export const BAKING_SKILL = 'baking'; // §Stage 5: flour -> bread
-
-export const IMPLEMENTED_SKILLS = [
+export {
   LABOR_SKILL,
   FARMING_SKILL,
+  TRADING_SKILL,
   WOODCUTTING_SKILL,
+  MANAGEMENT_SKILL,
   MILLING_SKILL,
   BAKING_SKILL,
-  TRADING_SKILL,
-  MANAGEMENT_SKILL,
-] as const;
-
-// Steep, learn-by-doing requirements (§13.2 "requirements grow steeply").
-// Placeholder curve — revisit with the balance harness (§17) once the harsh-
-// pace table (§13.1) has real playtesting to calibrate against.
-const XP_PER_LEVEL = 200;
-export const MAX_SKILL_LEVEL = 5;
-
-export function getXpForSkillLevel(level: number): number {
-  if (!Number.isInteger(level) || level < 0 || level > MAX_SKILL_LEVEL)
-    throw new Error(`Skill level must be a whole number between 0 and ${MAX_SKILL_LEVEL}.`);
-  return level * XP_PER_LEVEL;
-}
+  IMPLEMENTED_SKILLS,
+  MAX_SKILL_LEVEL,
+  getXpForSkillLevel,
+} from './skillLevels';
 
 export function ensureSkill(db: Database, entityId: string, skill: string): void {
   db.run('INSERT OR IGNORE INTO skills (entity_id, skill, xp) VALUES (?, ?, 0)', [entityId, skill]);

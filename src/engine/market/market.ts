@@ -9,8 +9,8 @@ import { withOptional } from '../optional';
 import { recordMarketActivity } from './activity';
 import { recordMarketFlow } from './history';
 import type { ActionDefinition } from '../actions/types';
+import type { Database } from '../db/sqlite';
 import type { EventBus, EventScope } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export interface MarketListing {
   id: number;

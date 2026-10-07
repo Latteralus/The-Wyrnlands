@@ -1,5 +1,6 @@
 import { findFirstActiveItem } from '../inventory/items';
 import { FARM_JOB_SLOT_ID, PLAYER_ID, REST_BUNK_PRICE } from '../seed/demoWorld';
+import { MINUTES_PER_DAY } from '../time/clock';
 import type { Engine } from '../engine';
 
 // The scripted "player just survives alongside the NPC population" policy
@@ -37,17 +38,51 @@ export function decideScriptedPlayerAction(engine: Engine): string {
 // stopping exactly at `untilTick` even mid-action (advanceTicks is just a
 // loop of single ticks, so where a caller splits it changes nothing about
 // the simulation itself).
+//
+// `commitDaily`: group everything into one transaction per in-game day, as
+// the game's batches do, instead of each engine call committing on its own
+// (a file-backed database pays per commit). Only the commits move: where
+// the loop stops and decides is unchanged, so the world is identical.
 export function runScriptedPlayerUntil(
   engine: Engine,
   untilTick: number,
-  options: { player: boolean },
+  options: { player: boolean; commitDaily?: boolean },
 ): void {
   if (!options.player) {
-    if (untilTick > engine.tick) engine.advanceTicks(untilTick - engine.tick);
+    if (untilTick <= engine.tick) return;
+    if (!options.commitDaily) {
+      engine.advanceTicks(untilTick - engine.tick);
+      return;
+    }
+    while (engine.tick < untilTick)
+      engine.advanceTicks(
+        Math.min(untilTick, (Math.floor(engine.tick / MINUTES_PER_DAY) + 1) * MINUTES_PER_DAY) - engine.tick,
+      );
     return;
   }
+  let day = Math.floor(engine.tick / MINUTES_PER_DAY);
+  if (options.commitDaily) engine.db.run('SAVEPOINT scripted_day');
+  try {
+    runPlayerLoop(engine, untilTick, () => {
+      if (!options.commitDaily || Math.floor(engine.tick / MINUTES_PER_DAY) === day) return;
+      day = Math.floor(engine.tick / MINUTES_PER_DAY);
+      engine.db.run('RELEASE scripted_day');
+      engine.db.run('SAVEPOINT scripted_day');
+    });
+    if (options.commitDaily) engine.db.run('RELEASE scripted_day');
+  } catch (error) {
+    if (options.commitDaily) {
+      engine.db.run('ROLLBACK TO scripted_day');
+      engine.db.run('RELEASE scripted_day');
+    }
+    throw error;
+  }
+}
+
+function runPlayerLoop(engine: Engine, untilTick: number, beforeStep: () => void): void {
   let safetyIterations = 0;
   while (engine.tick < untilTick) {
+    beforeStep();
     if (++safetyIterations > 5_000_000) {
       throw new Error('Scripted player loop exceeded its safety iteration cap — likely stuck.');
     }

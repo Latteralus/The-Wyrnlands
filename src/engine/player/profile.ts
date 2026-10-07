@@ -4,7 +4,7 @@ import { PERSONAL_CARRY_CAPACITY_KG, getCarriedWeightKg } from '../inventory/cap
 import { getHousehold, getHouseholdIdForMember } from '../population/households';
 import { getHouseholdProfile, getPersonProfile } from '../reports/profiles';
 import { getRoutinePreferences } from './preferences';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export function getPlayerProfile(db: Database, playerId: string) {
   return {

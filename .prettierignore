@@ -1,7 +1,8 @@
+dist-electron
+release
 dist
 node_modules
 coverage
-public/sql-wasm.wasm
 *.sqlite
 
 # Hand-authored prose docs — keep their own formatting conventions.

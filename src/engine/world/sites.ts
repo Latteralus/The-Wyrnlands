@@ -1,6 +1,6 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { gridDistance, type Coordinates } from './grid';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export interface Site extends Coordinates {
   id: string;

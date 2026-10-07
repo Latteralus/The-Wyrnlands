@@ -40,8 +40,8 @@ import {
 } from './households';
 import { FIRST_NAMES, SURNAMES, pick } from './npcGen';
 import { provisionHousehold } from './provisions';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Background aggregation (§4.2): NPC needs, wages, skill gain, and consumption
 // resolve in daily/weekly passes rather than through per-tick action queues.

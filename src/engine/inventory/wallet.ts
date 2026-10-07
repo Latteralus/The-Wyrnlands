@@ -1,8 +1,8 @@
 import { queryRow } from '../db/sqlite';
 import { MINUTES_PER_DAY } from '../time/clock';
 import { incrementCoinFaucetTotal, incrementCoinSinkTotal } from './counters';
+import type { Database } from '../db/sqlite';
 import type { EventBus, EventScope } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export function ensureWallet(db: Database, ownerId: string): void {
   db.run('INSERT OR IGNORE INTO wallets (owner_id, balance) VALUES (?, 0)', [ownerId]);

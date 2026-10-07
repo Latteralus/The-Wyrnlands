@@ -1,5 +1,5 @@
 import { queryRows } from '../db/sqlite';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export type MarketActivityKind =
   'purchase' | 'listed' | 'withdrawn' | 'imported' | 'exported' | 'direct' | 'sold_to_stall';

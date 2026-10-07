@@ -4,6 +4,7 @@ import {
   interruptCurrentAction,
   listActiveActions,
   listActorActions,
+  listActorsWithDueActions,
   processActorActions,
 } from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
@@ -139,9 +140,9 @@ import {
 } from './world/sites';
 import { getOpenTenure, grantSiteTenure, type Tenure, type TenureKind } from './world/tenure';
 import type { ActionDefinition, QueuedAction } from './actions/types';
+import type { Database } from './db/sqlite';
 import type { DestructionReason, Item, ProvenanceEvent } from './inventory/types';
 import type { PhaseTimer } from './perf/phaseTimer';
-import type { Database } from 'sql.js';
 
 // A body-slot garment needs at least this much warmth rating to count as
 // protection from a winter chill (§6). Placeholder threshold alongside the
@@ -348,7 +349,7 @@ export class Engine {
   // ensureWorldMeta as well as after (both bootstrap and a reload/
   // rehydration path guarantee the row exists by the time anything
   // external can reach this method).
-  private getStartSeasonIndex(): number {
+  getStartSeasonIndex(): number {
     if (this.startSeasonIndex === null) {
       const row = queryRow(this.db, 'SELECT start_season_index FROM world_meta WHERE id = 1');
       this.startSeasonIndex = Number(row?.[0] ?? 0);
@@ -389,20 +390,32 @@ export class Engine {
   // Stage 4/5's 90-day/2-year runs) reliably exhausts it and crashes with
   // "out of memory" well under 100k ticks. One transaction per call fixes it
   // — confirmed empirically (30k ticks unwrapped: OOM; 43.2k wrapped: clean).
+  //
+  // A SAVEPOINT rather than BEGIN: on its own it is exactly a transaction
+  // (committed when released), and inside a caller's transaction it nests —
+  // so a caller can make several batches and commands one commit (a
+  // file-backed database pays per commit; perf/longRun.ts's --commit day).
+  // The whole batch still rolls back if any tick in it fails.
   advanceTicks(count: number): void {
-    this.db.run('BEGIN');
+    this.db.run('SAVEPOINT advance_ticks');
     try {
       for (let i = 0; i < count; i++) {
         this.stepOneTick();
       }
-      this.db.run('COMMIT');
+      // The RNG position commits with the ticks that consumed it, so a
+      // database that is itself the save (a file-backed SQLite session)
+      // always resumes the draw sequence exactly where its last committed
+      // tick left it — even if the process dies before the next export.
+      this.syncRngState();
+      this.db.run('RELEASE advance_ticks');
     } catch (err) {
       // A sufficiently severe error (e.g. SQLite's own out-of-memory) can
-      // force-abort the transaction itself, leaving nothing for this
-      // ROLLBACK to roll back — that secondary failure must not mask the
-      // original error, which is the one worth seeing.
+      // force-abort the transaction itself, leaving nothing to roll back —
+      // that secondary failure must not mask the original error, which is
+      // the one worth seeing.
       try {
-        this.db.run('ROLLBACK');
+        this.db.run('ROLLBACK TO advance_ticks');
+        this.db.run('RELEASE advance_ticks');
       } catch {
         // transaction already gone; original err is what matters
       }
@@ -488,13 +501,11 @@ export class Engine {
     }
   }
 
+  // Only actors with an action starting or ending now — see
+  // actionQueue.ts's listActorsWithDueActions.
   private processActiveActions(currentTick: number): void {
-    const rows = queryRows(
-      this.db,
-      "SELECT DISTINCT actor_id FROM actions WHERE status IN ('queued', 'in_progress') ORDER BY actor_id ASC",
-    );
-    for (const row of rows) {
-      processActorActions(this.db, this.bus, this.actions, this.rng, String(row[0]), currentTick);
+    for (const actorId of listActorsWithDueActions(this.db, currentTick)) {
+      processActorActions(this.db, this.bus, this.actions, this.rng, actorId, currentTick);
     }
   }
 
@@ -983,8 +994,15 @@ export class Engine {
   // rng_state was last written at *construction* time, not from here —
   // silently replaying draws that already happened.
   export(): Uint8Array {
-    this.db.run('UPDATE world_meta SET rng_state = ? WHERE id = 1', [this.rng.getState()]);
+    this.syncRngState();
     return exportDatabase(this.db);
+  }
+
+  // Writes the RNG's current position into world_meta.rng_state, so whatever
+  // reads or copies the database next — an export, a file-backed save, a
+  // state fingerprint — resumes the draw sequence from here.
+  syncRngState(): void {
+    this.db.run('UPDATE world_meta SET rng_state = ? WHERE id = 1', [this.rng.getState()]);
   }
 
   dispose(): void {

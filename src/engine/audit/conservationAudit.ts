@@ -1,8 +1,8 @@
 import { getConservationCounters } from '../inventory/counters';
 import { countActiveItems } from '../inventory/items';
 import { sumWalletBalances } from '../inventory/wallet';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export interface AuditResult {
   tick: number;

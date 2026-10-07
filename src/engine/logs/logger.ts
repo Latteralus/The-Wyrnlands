@@ -1,7 +1,7 @@
 import { queryRows } from '../db/sqlite';
 import { withOptional } from '../optional';
+import type { Database } from '../db/sqlite';
 import type { EngineEvent, EventBus, EventScope } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export function attachLogger(db: Database, bus: EventBus): () => void {
   return bus.subscribe((event) => {

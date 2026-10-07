@@ -1,7 +1,7 @@
 import { queryRow } from '../db/sqlite';
 import { MINUTES_PER_DAY } from '../time/clock';
 import { listAllMarketListings } from './market';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // The market's memory (§8.1 rule 6 "agents act on last-known data"; §14.2
 // price history): per listing per day, the recorded price and stock plus how

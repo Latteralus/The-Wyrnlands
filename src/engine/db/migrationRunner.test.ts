@@ -32,6 +32,7 @@ describe('applyMigrations', () => {
       '0021_autonomous_routines',
       '0022_market_activity',
       '0023_player_experience',
+      '0024_due_actions_index',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 

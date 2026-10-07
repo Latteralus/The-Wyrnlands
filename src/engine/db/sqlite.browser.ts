@@ -1,28 +1,20 @@
 // Pinned to the explicit subpath rather than the bare "sql.js" specifier:
 // Vite's "browser" export condition resolves that to dist/sql-wasm-browser.js,
-// whose companion binary is sql-wasm-browser.wasm — a second wasm file to keep
-// in sync in public/. Importing the same build sqlite.node.ts uses means both
-// platforms request the one file we actually ship (public/sql-wasm.wasm).
+// whose companion binary is sql-wasm-browser.wasm; this build pairs with the
+// sql-wasm.wasm that Node (sqlite.node.ts) loads too.
 import initSqlJs, { type SqlJsStatic } from 'sql.js/dist/sql-wasm.js';
 
+// Runs the engine on sql.js inside a web page. The game itself no longer
+// does this — since the desktop migration the simulation runs in its own
+// process (src/sim-host) — but the renderer benchmark
+// (scripts/bench-renderer.mjs) still measures how the engine performs in a
+// Chromium page, as it ran before. The .wasm is served straight from
+// node_modules by the Vite dev server.
 let sqlJsPromise: Promise<SqlJsStatic> | null = null;
 
 export function loadSqlJs(): Promise<SqlJsStatic> {
   if (!sqlJsPromise) {
-    sqlJsPromise = initSqlJs({ locateFile: (file) => `/${file}` });
+    sqlJsPromise = initSqlJs({ locateFile: (file) => `/node_modules/sql.js/dist/${file}` });
   }
   return sqlJsPromise;
-}
-
-// Does NOT return a genuinely fresh WASM module in the browser (sql.js
-// caches its module promise at its own top level, and ES modules have no
-// invalidatable require cache) — calling it just returns the memoized
-// instance. That used to matter: long sessions in one tab were exposed to
-// the "memory ceiling" that checkpointing escaped in Node. The ceiling was
-// actually sql.js's db.exec() leaking WASM stack per call (see db/
-// sqlite.ts); the engine no longer calls exec(), so the browser no longer
-// needs a fresh module for long sessions. Kept only so checkpoint.ts has
-// the same shape on both platforms.
-export function loadFreshSqlJs(): Promise<SqlJsStatic> {
-  return initSqlJs({ locateFile: (file) => `/${file}` });
 }

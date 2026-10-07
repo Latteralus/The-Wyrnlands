@@ -1,7 +1,7 @@
 import { getGoodDefinition } from '../goods/catalog';
 import { listAllMarketListings } from './market';
 import { referenceStockFor } from './merchant';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // §8.1 rule 4: "target price = base × scarcity × demand × local × seasonal;
 // actual drifts ~10% of the gap per interval." This implements the scarcity

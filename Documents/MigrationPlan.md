@@ -1,3 +1,112 @@
+# Migration status report — 2026-10-06
+
+**State in one line:** the desktop migration is complete within its scope. React is in a sandboxed Electron renderer; the Engine, clock, RNG and saves run in a separate simulation process on native, file-backed SQLite. Phases 1–15 and 22–30 are implemented, documented and validated; 16–21 are groundwork plus the detailed `Documents/Archive/ScheduledActivityPlan.md`, as the scope rule allows. Native and checkpointed sql.js 1,095-day completion runs match the pre-migration fingerprint. The NSIS installer builds, installs, passes the full smoke flow on both backends, and uninstalls. Nothing is committed; all work remains in the working tree for review.
+
+## Where each phase stands
+
+| Phase | Status |
+|---|---|
+| 1 Electron shell | Done. Electron 44.6.0 (Chromium 152, Node 24.21). Vite builds the renderer and three Node bundles (`scripts/build-electron.mjs`); this was chosen because electron-vite did not support the installed Vite 8 during migration. UI moved to `src/renderer/`. |
+| 2 Security | Done. `contextIsolation`, `sandbox`, `nodeIntegration: false`, strict CSP (scripts `'self'` only, no wasm/eval), `app://wyrnlands` protocol instead of `file://`, navigation and `window.open` blocked, permissions denied, IPC sender checks, single-instance lock, fuses. The preload exposes only `host, versions, request, onNotification, exportSave, importSave`. |
+| 3–4 Protocol | Done. `src/shared/protocol.ts`: view snapshots per screen, player commands, session/save methods, notifications with change domains. Method names are allow-listed in the preload and the host; every parameter is shape-validated (`src/sim-host/validate.ts`); there is no way to send SQL. |
+| 5–7 Simulation process, clock, notifications | Done. Electron utility process (`src/electron/simProcess.ts` → `src/sim-host/`). The clock runs there on a fixed 200 ms grid, with the same pacing as before. The renderer refetches views only for changed domains; `useView` keeps one request in flight per view. No window → paused and saved; a reloaded window reconnects. |
+| 8 sql.js parity | Done. Same fingerprints in Node, the Electron renderer, Chrome and Electron's Node. |
+| 9 DB adapter | Done. A small `Database` interface (`run`/`query`/`export`/`close`) in `src/engine/db/sqlite.ts`; 45 engine modules only changed a type import. |
+| 10–11 Native SQLite and save lifecycle | Done. `node:sqlite` (built into Electron; no native module to rebuild). Binding mirrors sql.js (32-bit ints as INTEGER). Statement cache. The live save *is* the DB file (WAL, `synchronous=NORMAL`); manual saves and exports are `VACUUM INTO` snapshots. sql.js remains as a fallback: `--sim-backend=sqljs`. |
+| 12–13 Save directory, portable saves | Done. `%APPDATA%\The Wyrnlands\saves\<id>\{world.sqlite, metadata.json}`, plus an `autosave-backup` slot. Export/Import go through native dialogs in the main process; paths never come from the renderer. |
+| 14 Migrations | Done. `openGame(db)` validates and migrates inside one transaction. New migration `0024_due_actions_index`. Legacy schema-22 saves migrate identically on both backends. |
+| 15 Headless tests | Done. `npm test` runs on system Node (sql.js) with no Electron; `npm run test:native` runs the suite on Electron's Node, including the native backend. |
+| 16–20 Scheduling | Groundwork only, as the scope rule allows. Actions are now processed only when due (indexed by `ends_at_tick`); fingerprints are unchanged. Follow-up plan: `Documents/Archive/ScheduledActivityPlan.md`. |
+| 21 DB growth | Reviewed. No per-minute NPC history is written. About 80 MB per 365 simulated days (~26 MB per 120-day game year) under the scripted-player stress workload: provenance with its index ~50%, items ~23%, event_log ~13%, actions ~8%. Archival options remain in PERFORMANCE_AUDIT.md §6. |
+| 22 IPC | Measured. Round trips 0.2–1 ms; the largest view payload is 8.6 KB; tick notifications are under 400 bytes. |
+| 23–24 Shutdown and crash safety | Done. Orderly shutdown on quit; every batch commits with its RNG state; the app survives being killed at 16× (tested); 10-minute `world.sqlite.backup` with automatic restore if the live file is damaged; a crashed renderer reloads; a crashed simulation process restarts. |
+| 25 Dev ergonomics | Done. Vite HMR plus Electron restart on main/sim changes. Startup readiness is initialized only in `start()`; utility-process stdout/stderr are piped through main. The actual dev launcher loads the renderer and forwards simulation diagnostics without the startup rejection. |
+| 26 Packaging | Done. Unpacked and NSIS-installed applications pass the full smoke flow on both backends. `npm run package:installer` produces `release/The Wyrnlands Setup 0.1.0.exe` (~112 MB). Silent per-user installation in an isolated workspace directory and uninstall both exit 0; test files and registration are removed. |
+| 27 Tests | Done. See "Test results" below. |
+| 28 Benchmarks | Done. See "Measurements" below. |
+| 29 Behaviour survives | Verified. The Electron smoke test covers creation, character pages, equipment, routine, jobs, profiles, market purchase, founding, saves, export/import and relaunch. Long runs pass every nightly audit with unchanged fingerprints. |
+| 30 Documentation | Done. DECISIONS.md records architecture, IPC, SQLite, saves, security, recovery and measured tradeoffs; PERFORMANCE_AUDIT.md §9 records method, results, commit/checkpoint costs and storage limits. README, MASTERPLAN and this report are current. `ScheduledActivityPlan.md` remains the next gameplay slice. |
+
+## Completion work after resuming
+
+1. Replaced the eager rejected readiness promise with `null`; `whenReady()` rejects only when called before startup. Added four lifecycle regression tests (idle startup, readiness/output forwarding, fatal initialization, restart readiness).
+2. Switched utility-process output to pipes and relayed both streams through main with `{ end: false }`, preserving terminal output after a child exits. Verified the actual dev launcher with a disposable profile.
+3. Initial validation stopped at the late native-adapter change's formatting. Formatted it and reran validation after the WAL and `endSession` changes; both backends and build pass. Final counts are below.
+4. Built NSIS, installed to `release/installed-smoke`, ran the full smoke flow on native and sql.js, and uninstalled it. Verified the executable and temporary uninstall registration were removed. The installer remains under `release/`.
+5. Added the desktop decision and performance audit, and clarified save durability in README. Corrected benchmark units: the calendar has four 30-day seasons, so 365-day samples are not game years.
+6. Added `--executable PATH` to the smoke harness so installed builds can be tested directly. All smoke profiles are disposable; real saves were not used.
+
+The Windows execution sandbox's AppContainer ACLs prevented initial GUI launches. Local runtime read access was corrected, and GUI/dev checks ran outside that execution sandbox; the Electron renderer sandbox, isolation and Node restrictions stayed enabled and were asserted by the smoke tests.
+
+## Remaining release and gameplay follow-up
+
+- Configure code signing and a custom application icon before public distribution. `EnableNodeCliInspectArguments` remains enabled for packaged smoke automation; disable it for a signed public release.
+- Implement scheduled NPC/business operations as a separate slice using `Documents/Archive/ScheduledActivityPlan.md`; retain strategic cadence, LOD and meaningful history boundaries.
+- Adopt an archival policy before very long/multi-generation saves; native SQLite does not remove disk growth or snapshot costs.
+- Optional: inspect and remove the old `%APPDATA%\the-wyrnlands` folder from early dev runs. It was left untouched.
+- Review and commit the working tree when ready. Existing staged renames are preserved; new migration files remain untracked.
+
+## Measurements
+
+Same machine throughout (Windows 11, 24 threads, 32 GB). Named-player world, seed `stage5-scale-stress`, scripted player (the busiest workload), 1,095 days.
+
+| Host / backend | ms per sim-day (intervals ending at day 365 / 730 / 1,095) | Total | Peak RSS | Fingerprint |
+|---|---|---|---|---|
+| Pre-migration: Node 22, sql.js | 298 / 299 / 297 | 326 s | 383 MB | `5d3dfc2e9813e2aa` |
+| After migration: Node 22, sql.js | 299 / 306 / 297 | ~330 s | 389 MB | `5d3dfc2e9813e2aa` |
+| Electron's Node 24, sql.js | 295 / 265 / 264 | ~300 s | 378 MB | `5d3dfc2e9813e2aa` |
+| Electron's Node 24, native in memory | 61 / 55 / 56 | ~63 s | 382 MB | `5d3dfc2e9813e2aa` |
+| **Electron's Node 24, native file-backed (the game's configuration), one commit per day** | 104 / 108 / 116 | **120 s** | **157 MB, flat** | `5d3dfc2e9813e2aa` |
+
+- **In a Chromium renderer, 365 days** (how the game ran before): Electron renderer 259 ms/day, system Chrome 270 ms/day. Both give the same 365-day fingerprint as Node, `56ccb03711d3a18e`.
+- **World only** (no player, seed `econ-alpha`, 365 days): pre-migration sql.js 173 ms/day; native file-backed 74 ms/day; both `d6ba890fc120ce8d`.
+- **Database size:** 80.8 / 162.3 / 240.9 MB at days 365 / 730 / 1,095 (stress workload); world only, 66.7 MB at day 365. This is ~26 MB per 120-day game year under stress.
+- **Commit cost on Windows:** a file-backed commit costs about 0.6 ms. SQLite's default WAL autocheckpoint (every ~4 MB) made daily commits average 69 ms; raising it to 64 MB (the host checkpoints at each autosave anyway) brought world-only runs from 181 to 74 ms/day.
+- **Harness commit pattern:** the default (one commit per scripted action, about 240 per day) is much slower on a file. `--commit day` approximates batched throughput for comparisons; the game commits every clock batch/command, not once per simulated day. Native checkpoint rehydration in the harness switches to memory, so file-backed benchmarks use `--checkpoint 0`.
+
+**The running app** (`npm run bench:app`; 20 s per speed, new game):
+
+| | Phase 1 (simulation in the renderer) | Final (simulation process, native SQLite) |
+|---|---|---|
+| Long tasks at 16× | 6 (356 ms total, max 66 ms) | 0 |
+| Max frame gap at 16× | 61 ms | 12 ms |
+| Skip to morning (1 day) | 184–215 ms, window frozen up to 189 ms | 108–138 ms, max frame 6 ms |
+| Game minutes/s at 1× / 4× / 16× | 25 / 100 / 402 | 24.8 / 99.8 / 400 |
+| Tab switch median | 43 ms | 47–58 ms |
+| Memory | renderer 163–173 MB | renderer 173–177 MB + simulation process 66–74 MB |
+
+Reading the memory row: early in a game, total memory rises by roughly one Node process (~70 MB). Over a long game, the simulation's memory stays flat on native SQLite (157 MB at 1,095 days in the harness), where the old in-memory database grew to ~390 MB. The 365-day measurement intervals are retained for comparison with the pre-migration baseline; the game's actual year is 120 days.
+
+**IPC round trips** (renderer → simulation process → renderer): median 0.2–1.0 ms. Payloads: hud 0.5 KB, character 8.6 KB, business 7.8 KB, settlement 5.5 KB.
+
+## Test results
+
+- **Before the migration:** `npm run validate` passed; 253 tests passed, 1 skipped.
+- **Validation after resuming:** passed. 283 passed / 10 skipped on Node 22 (native-only tests skip there); 307 passed / 1 skipped on Electron's Node 24; typecheck, lint, formatting and build passed. Includes the late WAL and shutdown changes and the four new process-lifecycle regressions.
+- **New tests:**
+  - host sessions, views, commands, validation, clock pacing, reconnects, autosave, backup and recovery, saves, export/import, damaged files and IPC payloads, on both backends;
+  - backend equivalence (binding, a 4-day world, schema, legacy migration, rollbacks, portability);
+  - the renderer/simulation import boundary, plus a bundle check;
+  - window security options.
+- **Electron smoke** (`npm run test:electron`, `npm run test:packaged`): passed unpackaged and packaged on both backends, with no renderer console errors. The NSIS-installed executable also passed both backends through `node scripts/electron-smoke.mjs --executable PATH`.
+- **Native completion stress run:** 1,095 days, named player, `stage5-scale-stress`, file-backed WAL, `--commit day`, no profiling/checkpoints. 118,960 ms total; interval means 99 / 111 / 115 ms/day; RSS 156.3 / 156.9 / 157.4 MB; DB 80.8 / 162.3 / 240.9 MB. Zero failed nightly audits, final goods 1,269 and coin 60,414 conserved, fingerprint `5d3dfc2e9813e2aa`. Report: `logs/migration-validation/native-1095.json` (ignored local evidence). Installer/build/smoke checks partly overlapped this rerun, so the original comparison table remains the performance baseline.
+- **sql.js checkpoint completion run:** same named player, seed and 1,095-day workload on system Node, fresh-module save/reload at days 365 and 730. 349,612 ms total; interval means 342 / 324 / 291 ms/day. Zero failed nightly audits; final tick 1,576,800, goods 1,269, coin 60,414 and fingerprint `5d3dfc2e9813e2aa` match native and the original baseline. Report: `logs/migration-validation/sqljs-checkpoint-1095.json` (ignored local evidence). RSS reaches 546.6 MB with repeated WASM modules, consistent with the checkpoint memory overhead already documented in PERFORMANCE_AUDIT.md §5; this is not the production backend. Validation and GUI checks overlapped, so this rerun is determinism/save evidence rather than a controlled speed comparison.
+
+## Key files
+
+`src/electron/` (main, preload, simProcess, simulationProcess, windowOptions, contentSecurity) · `src/sim-host/` (simulationHost, views, validate, clock, domains, saveLibrary, storage, rpcServer, testing/) · `src/shared/` (protocol, rpc, rpcClient, gameRules, boundary.test) · `src/renderer/sim/` (client, hooks, context, SimulationProvider) · `src/engine/db/sqlite.native.ts`, `backends.test.ts`, migration `0024` · `scripts/` (build-electron, electron-dev, electron-smoke, electron-node, bench-electron, bench-renderer, after-pack) · `electron-builder.yml`.
+
+## Observations outside the migration's scope
+
+- **Duplicate NPC names.** Seeding can give two NPCs in one household the same name: "Mira Dunmoor" is both `npc-3` and `npc-4` for seed `electron-smoke`. This predates the migration.
+- **Browser-era saves.** Saves from the browser version are still in that browser's IndexedDB. They have to be exported from an older build and imported here.
+
+---
+
+# Original plan
+
+**Historical migration request.** This records the browser-era starting point and staged work that is now complete. Old `src/App.tsx`, `src/main.tsx`, `src/hooks/` and other UI paths below now live under `src/renderer/`; IndexedDB persistence has been replaced by the simulation host's file saves. Use [the project README](../README.md), [current player validation](./PLAYER_VALIDATION.md) and the completion report above for present setup/results. The original inspection lists and temporary migration steps below are not current architecture instructions.
+
 Work in the current `Latteralus/The-Wyrnlands` repository.
 
 I want to migrate The Wyrnlands from its current browser/Vite application into a proper Electron desktop application.

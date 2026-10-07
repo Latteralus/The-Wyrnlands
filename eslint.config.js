@@ -11,7 +11,7 @@ import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   {
-    ignores: ['dist', 'node_modules', 'coverage'],
+    ignores: ['dist', 'dist-electron', 'release', 'node_modules', 'coverage'],
   },
   {
     files: ['**/*.{ts,tsx}'],
@@ -69,6 +69,29 @@ export default tseslint.config(
         },
       ],
       'import-x/no-duplicates': 'error',
+    },
+  },
+  {
+    // The renderer reaches the simulation only through the typed protocol
+    // (src/shared); src/shared/boundary.test.ts checks the same rule.
+    files: ['src/renderer/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/engine/**', '**/sim-host/**', '**/electron/**'],
+              message:
+                'Renderer code may import only from src/shared (protocol, gameRules) — never the engine or host.',
+            },
+            {
+              group: ['electron', 'sql.js', 'node:*'],
+              message: 'The renderer has no Node, Electron or database access.',
+            },
+          ],
+        },
+      ],
     },
   },
   {

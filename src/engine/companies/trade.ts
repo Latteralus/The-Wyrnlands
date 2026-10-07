@@ -7,8 +7,8 @@ import { recordMarketFlow } from '../market/history';
 import { getListing } from '../market/market';
 import { getRecipeForSkill } from '../production/recipes';
 import { getCompany, recordLedgerEntry, type Company } from './companies';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Direct trade between local businesses (§9.7's "the bakery contracts
 // standing flour deliveries from the mill", minus freight — everything is

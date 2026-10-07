@@ -7,7 +7,7 @@ import { PERSONAL_CARRY_CAPACITY_KG } from '../inventory/capacity';
 import { createWorld } from '../seed/demoWorld';
 import { IMPLEMENTED_SKILLS, MAX_SKILL_LEVEL, getXpForSkillLevel } from '../skills/skills';
 import { DEFAULT_ROUTINE, setRoutinePreferences } from './preferences';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export interface StartingItem {
   goodType: string;

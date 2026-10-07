@@ -5,7 +5,7 @@ import type { EventBus } from '../eventBus';
 import type { Rng } from '../rng';
 import type { ActionRegistry } from './registry';
 import type { ActionOutcome, ActionStatus, QueuedAction } from './types';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 const COLUMNS =
   'id, actor_id, type, status, queued_at_tick, started_at_tick, ends_at_tick, duration_ticks, progress_ticks, outcome, sequence';
@@ -60,6 +60,26 @@ export function listActiveActions(db: Database, actorId: string): QueuedAction[]
     `SELECT ${COLUMNS} FROM actions WHERE actor_id = ? AND status IN ('queued', 'in_progress') ORDER BY sequence ASC`,
     [actorId],
   ).map(rowToAction);
+}
+
+// The actors with something to do this tick: an in-progress action that
+// ends now (or ended earlier), or a queued action with nothing in progress
+// ahead of it. Everyone else is mid-activity, and processing them would
+// change nothing — so a tick costs what happens in it, not how many actors
+// are busy (Documents/ScheduledActivityPlan.md §3). In actor order, as
+// actors were always processed. Each branch reads its own partial index
+// (migration 0024).
+export function listActorsWithDueActions(db: Database, currentTick: number): string[] {
+  return queryRows(
+    db,
+    `SELECT actor_id FROM actions WHERE status = 'in_progress' AND ends_at_tick <= ?
+     UNION
+     SELECT actor_id FROM actions AS queued WHERE status = 'queued'
+       AND NOT EXISTS (SELECT 1 FROM actions AS busy
+                       WHERE busy.actor_id = queued.actor_id AND busy.status = 'in_progress')
+     ORDER BY actor_id ASC`,
+    [currentTick],
+  ).map((row) => String(row[0]));
 }
 
 export function enqueueAction(

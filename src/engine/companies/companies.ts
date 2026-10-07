@@ -1,6 +1,6 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { releaseTenuresForHolder } from '../world/tenure';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // §9.1 Structure. A company is also an entities row (its id is the
 // container/owner id its wallet and inventory hang off of, same as a

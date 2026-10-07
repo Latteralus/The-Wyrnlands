@@ -2,8 +2,8 @@ import { cancelQueuedActions, enqueueAction, interruptCurrentAction } from '../a
 import { queryRow } from '../db/sqlite';
 import { getEntityName, isYou } from '../entities';
 import type { ActionRegistry } from '../actions/registry';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 export type NeedKey = 'hunger' | 'thirst' | 'energy' | 'warmth';
 export const NEED_KEYS: readonly NeedKey[] = ['hunger', 'thirst', 'energy', 'warmth'];

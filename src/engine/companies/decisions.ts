@@ -47,8 +47,8 @@ import {
 } from './companies';
 import { getFoundingRecord } from './founding';
 import { buyFromLocalSuppliers, tradePrice } from './trade';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // §9's own settlement, hardcoded like population/cadence.ts's MARKET_SITE_ID
 // — no second settlement exists before Stage 7's region model.

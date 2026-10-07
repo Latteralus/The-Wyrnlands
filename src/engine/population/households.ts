@@ -1,6 +1,6 @@
 import { queryRow, queryRows } from '../db/sqlite';
 import { setSimulationMode, type SimulationMode } from '../entities';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 // §10 Households. A household is also an entities row — same "reuse the
 // entity/wallet/item machinery" precedent as companies (§Stage 3): it owns

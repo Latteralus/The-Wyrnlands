@@ -38,9 +38,8 @@ export function loadSqlJs(): Promise<SqlJsStatic> {
 // only needed for checkpoint.ts's save/reload-in-a-fresh-module facility.
 //
 // Node/CJS-only — there's no browser-side equivalent of require-cache
-// invalidation for a statically-imported ES module (see sqlite.browser.ts's
-// loadFreshSqlJs, which is NOT yet proven to give a genuinely fresh
-// instance — that's a separate, open problem). Only checkpoint.ts's
+// invalidation for a statically-imported ES module (and since the desktop
+// migration nothing runs the game in a browser). Only checkpoint.ts's
 // rehydration cycle should call this, and only occasionally: it recompiles
 // the wasm binary, which isn't free.
 export async function loadFreshSqlJs(): Promise<SqlJsStatic> {

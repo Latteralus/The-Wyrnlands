@@ -1,16 +1,18 @@
 # The Wyrnlands — MasterPlan
 
-**Version:** 2.1 · **Date:** July 2026
-**Genre:** Offline medieval life-simulation / economic sandbox — interface-driven browser game
+**Design version:** 2.1 (July 2026) · **Architecture updated:** 2026-10-06, Electron desktop
+**Genre:** Offline medieval life-simulation / economic sandbox — interface-driven desktop game (Electron; a browser game until the 2026-10-06 desktop migration)
 **Influences:** The Guild series, Torn (timed actions, interface-driven play, persistent logs), Dwarf Fortress (emergence, chronicle-worthy events)
 
 **Changes in v2.1 (harshness & depth pass):** Locked the harsh pace philosophy — medieval life is hard, and the game applies it. Skill now affects speed, **failure rate, and quality** from v1. Companies are living organisms: they buy equipment for workers, grow through upgrade tiers (max 20 employees), contract with other businesses, and rise or fall on their owner's **Management skill** — NPC and player alike. Added: randomized starting economic conditions, wage haggling, regional resource distribution on a **grid-coordinate world**, item provenance (every item tracked through its life), infinite skill-gated resource nodes, the **trade school**, transport assets (carts, wagons, horses with feed upkeep), and NPC marriage/children as chronicle events. Vision reframed: The Wyrnlands is a **storytelling engine** powered by a closed economy.
+
+**Reading this plan:** §4 describes the current desktop foundation. Gameplay systems and stage exit criteria elsewhere are design targets unless explicitly marked implemented; transport, construction, a trade school and family simulation are not supplied by the Electron migration. See [documentation guide](./README.md) for current implementation and validation references.
 
 ---
 
 ## 1. Vision Statement
 
-The Wyrnlands is a fully offline, browser-based medieval life simulation. The player begins as a penniless commoner in a living settlement where every citizen works, eats, trades, and sleeps under the same rules the player does. Nothing is faked: every loaf of bread was baked from real flour, milled from real grain, grown on a real field, hauled by a real cart — and every one of those steps can be traced.
+The Wyrnlands is a fully offline desktop medieval life simulation. The player begins as a penniless commoner in a living settlement where every citizen works, eats, trades, and sleeps under the same rules the player does. Nothing is faked: every loaf of bread was baked from real flour, milled from real grain, grown on a real field, hauled by a real cart — and every one of those steps can be traced.
 
 **Fundamental identity:** an *economic simulation experienced through one individual's life*. The player participates in the system; they do not exist above it.
 
@@ -33,7 +35,7 @@ When two features conflict, the pillar higher on this list wins.
 3. **Resilient instability, not equilibrium.** Constant friction balanced by stabilizers. Shortages and failures happen; society adapts before every disruption becomes an apocalypse.
 4. **Life is harsh; patience is the progression system.** Skills grow slowly by doing and cost failures along the way. Basic necessities — shoes, clothes, tools — are real expenses produced by the real economy. Proficiency and wealth are measured in in-game years, and they feel earned.
 5. **Information is the graphics.** Rich screens, persistent logs, portraits, illustrated panels, atmospheric writing. If a system can't be seen through the interface, it may as well not exist.
-6. **Fully offline and portable.** One browser tab, one .sqlite save file.
+6. **Fully offline and portable.** One desktop app; every save is one ordinary .sqlite file the player owns, exports and imports.
 7. **Modular and testable.** The simulation is a pure TypeScript engine, independent of React, unit-tested and runnable headless.
 
 ---
@@ -54,34 +56,39 @@ Every feature must connect into this loop.
 
 | Layer | Choice | Notes |
 |---|---|---|
-| Interface | React 18 + TypeScript | Screens, panels, logs, timers; light CSS animation |
-| Simulation engine | Pure TypeScript, zero React/DOM dependencies | Runs identically in browser and Node tests |
-| World state | SQLite via sql.js (WebAssembly) | The database IS the game state; save = export DB bytes |
-| Build | Vite | |
-| Tests | Vitest | Headless simulation runs against the same sql.js DB |
-| Persistence | .sqlite download/upload; IndexedDB autosave | Player owns their save |
+| Desktop host | Electron (main process + sandboxed renderer + simulation utility process) | Added 2026-10-06 — see DECISIONS.md "The Wyrnlands becomes a desktop application" |
+| Interface | React 19 + TypeScript, in the renderer | Screens, panels, logs, timers; light CSS animation. Reads views and sends commands over a typed protocol; owns no simulation state |
+| Simulation engine | Pure TypeScript, zero React/DOM/Electron dependencies | Runs in its own process in the game, and identically in Node tests and the headless harness |
+| World state | SQLite — native, file-backed (`node:sqlite`) in the game; sql.js (WebAssembly) in tests and as a fallback | The database IS the game state; the save file IS the live database |
+| Build / packaging | Vite + Electron bundle scripts + electron-builder | Vite builds React and the main/preload/simulation bundles; Windows packaging produces an unpacked app and NSIS installer |
+| Tests | Vitest | Headless simulation on both SQLite backends; Electron smoke tests drive the real (and packaged) app |
+| Persistence | Save folders in the app data directory; live autosave, snapshots, safety copy; `.sqlite` export/import via native dialogs | Native live saves commit each batch/command; sql.js fallback writes snapshots on autosave/close. WAL/NORMAL can lose recent commits on OS failure/power loss |
 | Assets | Static location illustrations, icon set, NPC portrait pool | No sprites, no Phaser |
 
 ### 4.2 Architecture Rules
 
-- **The simulation is a library; React is a client.** Narrow engine API (advance ticks, query state, submit commands). The full game runs 10,000+ ticks headless with no DOM.
+- **The simulation is a library; React is a protocol client.** The host uses the narrow engine API (advance ticks, query state, submit commands); renderer screens use `window.wyrnlands` through `src/renderer/sim/`. The full game runs 10,000+ ticks headless with no DOM.
+- **Process boundary (desktop, 2026-10-06).** The engine, its database, the clock and the RNG live in the simulation process; React lives in a sandboxed renderer with no Node access. They exchange typed, serializable protocol messages — screen-sized view snapshots, player commands, change notifications (`src/shared/protocol.ts`) — never live Engine instances, SQL or database handles. Main owns native dialogs and validated filesystem paths. Real time decides when the next batch of ticks runs; what happens depends on ticks alone. The engine never imports Electron.
 - **The database is the single source of truth.** Caches always reconstructible; React state derives from engine queries, never the reverse.
 - **Deterministic ticks.** Same DB + same seeded RNG = same result.
 - **Module boundaries:** `time`, `needs`, `actions`, `jobs`, `production`, `inventory`, `market`, `households`, `companies`, `construction`, `housing`, `transport`, `population`, `logs`, `ui-api`. Communication via DB + event bus only.
-- **Staggered decision cadence:** per tick (needs, action/production progress) → hourly (market clearing, price drift) → daily (ledgers, business decisions, household budgets, schedules) → weekly (hiring/wages, migration, rent) → nightly (conservation audit).
+- **Current cadence:** per tick (foreground needs and due actions); daily (aggregate NPC shifts, household needs/provisioning, market price drift, company operations/decisions and conservation audit); weekly (job seeking, migration, tithes, rent and owner draws); fortnightly (entrepreneurship). Future operational scheduling changes completion times, while strategic decisions remain lower frequency.
 
 ### 4.3 Time Model & Timed Actions
 
 - Base tick = 1 in-game minute; **pause / 1× / 4× / 16×** plus **skip-to-action-complete** and **skip-to-morning**. Offline and single-player: acceleration is always available — the Torn influence is the *structure* of committed timed actions, not real-world clocks.
 - **Everything is a timed action** with in-game duration, occupying the character exclusively: work shifts, gathering, resting (quality by shelter tier), eating, errands, travel, training (trade school), and management sessions. Actions queue; interruption gives proportional results.
 - **Actions can fail.** Low skill means slower work, wasted materials, and outright failed attempts (a spoiled batch, a ruined hide, a tree felled badly). Failure consumes time and sometimes inputs — this is the teeth of the harsh-pace pillar and the reason self-employment is a trap for the unskilled.
-- Calendar: days → weeks → 4 seasons → years. Seasons drive harvests, spoilage, fuel demand, travel durations.
+- Calendar: 1,440 minute ticks/day, seven-day weeks, four 30-day seasons, **120 days/year**. Winter fuel/needs are implemented; broader seasonal harvest, price and travel effects are design targets.
 
 ### 4.4 Simulation Level of Detail (LOD)
+
+Current `entities.simulation_mode` separates the foreground player from background NPCs; household membership is independent. NPC shifts/needs/provisioning use aggregate daily passes, and location presence is an hourly lookup. The following regional hierarchy is the target, not an already implemented multi-settlement simulation:
 
 - **Active (player's settlement):** every NPC at schedule resolution — hourly location presence, individual transactions, full logs.
 - **Regional:** full entities at daily resolution — production, consumption, hiring, prices, migration, shipments.
 - **Background (distant, Stage 7+):** weekly/monthly aggregates over real stockpiles; rehydrated into individuals when the player arrives.
+- *Plan (2026-10-06):* NPCs in the active settlement move from today's daily aggregate passes onto scheduled timed activities in the existing actions table — shifts, errands, deliveries resolve when they end, not every minute; strategy stays daily/weekly. See Documents/Archive/ScheduledActivityPlan.md.
 
 Conservation holds across all tiers.
 
@@ -311,7 +318,7 @@ Illustrated location panels (season/time-tinted), persistent NPC portraits, a co
 - **NPC profile:** §11.2.
 - **Region screen / optional map:** grid-derived distances, last-known info, travel initiation.
 - **Trade school screen:** courses, tuition, duration, prerequisites.
-- **Title / New Game / Save/Load (implemented 2026-10-06):** Standard/Custom named character creation, seed/season options, IndexedDB autosave and manual slots, newest-valid Continue, raw `.sqlite` export/import, schema migration and format compatibility validation. No world is created until New Game or a save is selected.
+- **Title / New Game / Save/Load (implemented 2026-10-06; desktop saves the same day):** Standard/Custom named character creation, seed/season options, a live autosave (the running game's own database file) plus manual saves as file snapshots, newest-valid Continue, `.sqlite` export/import through native file dialogs, schema migration and format compatibility validation. No world is created until New Game or a save is selected.
 
 ### 14.3 The Log System (core feature)
 
@@ -328,8 +335,8 @@ Roll a world: this village, this season, this situation — maybe the mill just 
 Each stage ends in a playable, testable build. Stages 0–3 = **First Playable.** No stage begins until the previous exit test passes.
 
 ### Stage 0 — Foundation
-Scaffold (Vite + React + TS + sql.js + Vitest); schema v1 + migrations; tick engine + time controls + cadence scheduler; **timed-action framework with failure outcomes** (start/progress/fail/complete/interrupt/queue); grid-coordinate world model; event bus + log pipeline; engine↔UI API; headless runner; **conservation audit + provenance recording from day one.**
-**Exit:** 10,000 deterministic headless ticks; scripted actor completes a queued action chain including a failed attempt; save→load→resave identical; audit passes; a seeded item's provenance chain is queryable.
+Original foundation: Vite + React + TS + sql.js + Vitest; schema v1 + migrations; tick engine + time controls + cadence scheduler; **timed-action framework with failure outcomes** (start/progress/fail/complete/interrupt/queue); grid-coordinate world model; event bus + log pipeline; headless runner; **conservation audit + provenance recording from day one.** The 2026-10-06 desktop migration replaces browser hosting with Electron, protocol-driven renderer access and native file-backed SQLite; sql.js remains for tests/fallback. Current schema is migration 0024.
+**Exit:** 10,000 deterministic headless ticks; scripted actor completes a queued action chain including a failed attempt; save→load preserves logical state and RNG continuation (original sql.js tests also assert byte-identical resave); audit passes; a seeded item's provenance chain is queryable. Native/sql.js files may have different physical layouts; cross-backend equality uses canonical logical state.
 
 ### Stage 1 — The Interface Shell
 React shell + HUD; settlement screen with clickable locations (stub panels); location panel template; log UI (personal + settlement); time controls incl. skips; placeholder illustrations, icons, portraits wired.
@@ -349,7 +356,7 @@ The farm as employer: notice board, application with **simple wage haggling**, s
 
 ### Stage 5 — The Closed Economy & Living Companies
 Full v1 chains; NPC business ledgers with **Management-weighted decisions**; **company equipment purchasing, upgrade tiers (20-employee cap), and growth behavior**; **B2B contracts** (standing supply + freight); smoothed pricing; failure + auction; faucets/sinks; seasons; stabilizers; merchant imports; **rolled starting conditions**; market charts; business logs; world chronicle.
-**Exit:** headless 2-year run within resilient-instability bounds; stress scenarios naturally produce a business failure, an auction purchase, a company that *grows* (hires + buys equipment), and a migration wave — all reconstructable from the chronicle alone.
+**Exit:** headless 2-game-year run (240 days) within resilient-instability bounds; stress scenarios naturally produce a business failure, an auction purchase, a company that *grows* (hires + buys equipment), and a migration wave — all reconstructable from the chronicle alone. Historical 730-day balance runs are longer scale tests, not two calendar years.
 
 ### Stage 6 — Player Enterprise
 Buy/rent plots; construction (real materials, builder labor, timed oversight); found a company; hire with haggling and labor inertia; **full tabbed company screens (§14.2)**; equipment purchasing; upgrade tiers; contracts as buyer; housing ladder to ownership.
@@ -371,9 +378,11 @@ Combat, crime & law; aging/death/heirs (dynasty mode); religion; guilds/apprenti
 
 ## 16. Data Model (prose overview)
 
+The following is the target model across gameplay stages; several tables/systems are not implemented yet. Applied migrations in `src/engine/db/migrations/` are authoritative for today's SQLite schema, shared by native and sql.js backends. Wall-clock save metadata lives in `metadata.json`, outside deterministic simulation state.
+
 Core tables: **entities** (people, portrait ref, permanent history), **households**, **needs**, **skills** (incl. Management), **traits**, **actions** (current/queued, with outcome records), **inventories** + **items** (single-container rule; spoilage; durability; **quality tier; provenance chain**), **gear** (worn shoes/clothing/tools per entity), **buildings** (condition, owner, storage, **grid coordinates**), **properties/tenancy**, **businesses/companies** (ledger, policies, **upgrade tier, equipment roster**) + **job_slots** + **employment** (contracts, wages, tenure, haggled terms), **contracts_b2b** (supply + freight), **transport_assets** (carts, wagons, animals with feed requirements), **recipes**, **production_runs** (with failure outcomes), **market_listings** + **transactions**, **prices** (current/target/history), **schedules**, **settlements** (economic + resource profile, coordinates) + **region_stats**, **knowledge** (last-known info per agent), **life_events** (weddings, births — feeding the chronicle), **event_log** (scope-tagged: personal/business/settlement/world), **world_meta** (tick, date, season, RNG seed, **scenario roll**, schema version).
 
-**Nightly audit:** all goods and coin vs. prior audit ± logged faucets/sinks/spoilage/wear. Drift = bug, caught same day. Provenance chains make any anomaly traceable to the exact transaction.
+**Nightly audit (implemented):** accumulated production/destruction and coin faucet/sink counters are compared with active item counts and live wallet totals. Transfers conserve quantities; drift is a bug caught at the daily boundary. Provenance chains trace anomalies to economic operations. The audit does not rely on comparing only against the previous audit or on presentation log rows.
 
 **Modding:** goods, recipes, buildings, locations, courses, and text as data (DB records + JSON packs) from day one; scripting post-v1.
 
@@ -384,6 +393,7 @@ Core tables: **entities** (people, portrait ref, permanent history), **household
 - **Unit tests** per module (needs, price drift, recipe resolution incl. failure/quality rolls, utility scoring, haggling bands, action timing, contract fulfillment, log emission).
 - **Headless scenarios:** seeded 30/90/730-day runs asserting: audit passes, no baseline starvation, prices in bounds, well-managed businesses solvent / badly-managed stressed, adaptation ladders fire, at least one company growth arc completes, harsh-pace milestones (§13.1) hold within tolerance.
 - **Determinism, save integrity, forward migration** as before.
+- **Desktop boundaries and persistence:** renderer import/bundle checks, host requests and validation, clock/reconnect behavior, native/sql.js equivalence, portable saves, shutdown/recovery and actual Electron GUI smoke tests (built, packaged and installed). Current commands and results: [PLAYER_VALIDATION.md](./PLAYER_VALIDATION.md).
 - **Balance harness:** parameter sweeps (wages, yields, failure curves, tuition, upgrade costs, fodder rates) → CSV. **Target: resilient instability + the harsh-pace table.** If a sweep shows a business is reachable in one year, that's a balance bug.
 
 ---
@@ -400,16 +410,16 @@ Core tables: **entities** (people, portrait ref, permanent history), **household
 | Writing workload | Conditional-text templates; writing itemized per stage like code |
 | Information overload | Progressive disclosure; first hour playable from settlement screen + three panels |
 | Company sim complexity creep | Equipment/upgrades/contracts are all data-driven through the same recipe/ledger machinery — no bespoke systems |
-| sql.js memory ceiling | Lean schema; background aggregation; provenance + log pruning/archival policy for old events |
+| ~~sql.js memory ceiling~~ → database growth | Ceiling solved (PERFORMANCE_AUDIT.md) and the game now runs on native, file-backed SQLite; growth (~80 MB per 365 simulated days, ~26 MB per 120-day game year under the busiest workload) is a disk/backup concern — background aggregation, no per-minute history, provenance + log archival policy for old events |
 | Scope creep | Pillars + exit tests; post-v1 list |
 | Solo/AI-assisted complexity | Engine/UI separation; one module per session |
 
 ---
 
-## 19. Working With Claude Code
+## 19. Working on the Project
 
 - One module or one stage-task per session; cite section numbers.
-- Every simulation feature ships with its headless test; every screen consumes the engine API only.
+- Every simulation feature ships with its headless test; every renderer screen uses the typed protocol through `src/renderer/sim/`. Engine/UiApi access belongs to the simulation host.
 - Schema changes via migrations only.
 - Writing/content tracked as deliverables like code.
 - Maintain `DECISIONS.md`; when reality diverges from plan, update the plan.

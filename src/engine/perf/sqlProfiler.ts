@@ -1,7 +1,7 @@
 import { observeQueries } from '../db/sqlite';
-import type { BindParams, Database } from 'sql.js';
+import type { BindParams, Database } from '../db/sqlite';
 
-// A measurement tool, not simulation logic: observes one sql.js Database's
+// A measurement tool, not simulation logic: observes one Database's
 // queries (db/sqlite.ts's queryRows) and wraps its run() so every statement
 // the engine issues is timed and counted,
 // keyed by its normalized SQL text. Used by the long-run performance harness
@@ -53,10 +53,10 @@ export function attachSqlProfiler(db: Database): SqlProfiler {
   const originalRun = db.run;
 
   observeQueries(db, record);
-  db.run = (sql: string, params?: BindParams): Database => {
+  db.run = (sql: string, params?: BindParams): void => {
     const start = performance.now();
     try {
-      return originalRun.call(db, sql, params);
+      originalRun.call(db, sql, params);
     } finally {
       record(sql, performance.now() - start);
     }
@@ -67,7 +67,9 @@ export function attachSqlProfiler(db: Database): SqlProfiler {
     reset: () => stats.clear(),
     detach: () => {
       observeQueries(db, null);
-      db.run = originalRun;
+      // The class method again, rather than an own-property copy of it.
+      delete (db as { run?: unknown }).run;
+      if (db.run !== originalRun) db.run = originalRun;
     },
   };
 }

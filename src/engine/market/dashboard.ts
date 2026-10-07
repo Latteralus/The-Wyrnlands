@@ -3,7 +3,7 @@ import { getGoodDefinition, type GoodCategory } from '../goods/catalog';
 import { getCarriedWeightKg, PERSONAL_CARRY_CAPACITY_KG } from '../inventory/capacity';
 import { dayOf } from './history';
 import { listListingsForSite, marketStockContainerId } from './market';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
 export interface MarketSeller {
   sellerId: string | null;

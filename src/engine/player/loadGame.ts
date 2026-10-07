@@ -1,27 +1,47 @@
 import { registerGameActions } from '../actions/gameActions';
 import { inspectConservation } from '../audit/conservationAudit';
 import { migrations } from '../db/migrations';
-import { createDatabase, queryRow, queryRows, withSavepoint } from '../db/sqlite';
+import {
+  createDatabase,
+  queryRow,
+  queryRows,
+  withSavepoint,
+  type Database,
+  type SqlJsStatic,
+} from '../db/sqlite';
 import { Engine } from '../engine';
 import { IMPLEMENTED_SKILLS } from '../skills/skills';
 import { getRoutinePreferences, setRoutinePreferences } from './preferences';
-import type { SqlJsStatic } from '../db/sqlite';
 
 export const SAVE_FORMAT_VERSION = 1;
 export const GAME_VERSION = '0.1.0';
 
 export class SaveLoadError extends Error {}
 
-// Validate before any migrations or engine bootstrap can write to an imported database.
+// Every SQLite file starts with this 16-byte header.
+export function isSqliteHeader(bytes: Uint8Array): boolean {
+  return new TextDecoder().decode(bytes.slice(0, 16)) === 'SQLite format 3\0';
+}
+
+// A saved game held as bytes, opened on sql.js. Validated before any
+// migration or engine bootstrap can write to it.
 export function loadGame(SQL: SqlJsStatic, bytes: Uint8Array): Engine {
-  if (new TextDecoder().decode(bytes.slice(0, 16)) !== 'SQLite format 3\0')
-    throw new SaveLoadError('This file is not a SQLite game save.');
+  if (!isSqliteHeader(bytes)) throw new SaveLoadError('This file is not a SQLite game save.');
   let db;
   try {
     db = createDatabase(SQL, bytes);
   } catch {
     throw new SaveLoadError('This file is damaged or is not a compatible Wyrnlands save.');
   }
+  return openGame(db);
+}
+
+// Opens a saved game on any backend (e.g. a file-backed native database):
+// checks it is an intact, supported Wyrnlands world, migrates it, upgrades
+// legacy content, registers its actions, and audits it. Everything it writes
+// happens in one transaction — a save that fails any check is left exactly
+// as it was. Takes ownership of `db`: closes it on failure.
+export function openGame(db: Database): Engine {
   let engine: Engine | null = null;
   try {
     if (queryRow(db, 'PRAGMA quick_check')?.[0] !== 'ok') throw new SaveLoadError('This save is damaged.');
@@ -48,43 +68,52 @@ export function loadGame(SQL: SqlJsStatic, bytes: Uint8Array): Engine {
       )
         throw new SaveLoadError('This save uses an unsupported format. Update the game to load it.');
     }
-    engine = withSavepoint(db, () => Engine.bootstrap(db, { seed: String(meta[1]) }));
-    const playerId = engine.getPlayerEntityId();
-    if (
-      !engine.getEntity(playerId) ||
-      !engine.getNeeds(playerId) ||
-      !engine.getSite('well') ||
-      !engine.getSite('tavern')
-    )
-      throw new SaveLoadError('This save has no playable character or settlement.');
-    // Upgrade legacy anonymous-player saves without creating any world content, coin, or gear.
-    if (!applied.includes('0023_player_experience')) {
-      if (!engine.getHouseholdIdForMember(playerId)) {
-        engine.createHousehold({
-          id: `${playerId}-household`,
-          name: `${engine.getEntity(playerId)?.name ?? 'Player'} Household`,
-          homeSiteId: 'tavern',
-        });
-        engine.addHouseholdMember(`${playerId}-household`, playerId, 'foreground');
-      }
-      for (const skill of IMPLEMENTED_SKILLS) engine.ensureSkill(playerId, skill);
-      setRoutinePreferences(db, playerId, getRoutinePreferences(db, playerId));
-    }
-    registerGameActions(engine);
-    for (const row of queryRows(
-      db,
-      "SELECT DISTINCT type FROM actions WHERE status IN ('queued', 'in_progress')",
-    )) {
-      if (!engine.actions.has(String(row[0])))
-        throw new SaveLoadError('This save contains actions unavailable in this version.');
-    }
-    if (!inspectConservation(db, engine.tick).passed)
-      throw new SaveLoadError('This save failed the world integrity check.');
-    return engine;
+    const seed = String(meta[1]);
+    return withSavepoint(db, () => {
+      engine = Engine.bootstrap(db, { seed });
+      return finishOpening(db, engine, applied);
+    });
   } catch (error) {
-    if (engine) engine.dispose();
+    const opened = engine as Engine | null;
+    if (opened) opened.dispose();
     else db.close();
     if (error instanceof SaveLoadError) throw error;
     throw new SaveLoadError('This file is damaged or is not a compatible Wyrnlands save.');
   }
+}
+
+// The checks and upgrades that need a bootstrapped engine.
+function finishOpening(db: Database, engine: Engine, applied: string[]): Engine {
+  const playerId = engine.getPlayerEntityId();
+  if (
+    !engine.getEntity(playerId) ||
+    !engine.getNeeds(playerId) ||
+    !engine.getSite('well') ||
+    !engine.getSite('tavern')
+  )
+    throw new SaveLoadError('This save has no playable character or settlement.');
+  // Upgrade legacy anonymous-player saves without creating any world content, coin, or gear.
+  if (!applied.includes('0023_player_experience')) {
+    if (!engine.getHouseholdIdForMember(playerId)) {
+      engine.createHousehold({
+        id: `${playerId}-household`,
+        name: `${engine.getEntity(playerId)?.name ?? 'Player'} Household`,
+        homeSiteId: 'tavern',
+      });
+      engine.addHouseholdMember(`${playerId}-household`, playerId, 'foreground');
+    }
+    for (const skill of IMPLEMENTED_SKILLS) engine.ensureSkill(playerId, skill);
+    setRoutinePreferences(db, playerId, getRoutinePreferences(db, playerId));
+  }
+  registerGameActions(engine);
+  for (const row of queryRows(
+    db,
+    "SELECT DISTINCT type FROM actions WHERE status IN ('queued', 'in_progress')",
+  )) {
+    if (!engine.actions.has(String(row[0])))
+      throw new SaveLoadError('This save contains actions unavailable in this version.');
+  }
+  if (!inspectConservation(db, engine.tick).passed)
+    throw new SaveLoadError('This save failed the world integrity check.');
+  return engine;
 }

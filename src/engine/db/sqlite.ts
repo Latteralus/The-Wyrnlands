@@ -1,9 +1,69 @@
-import type { BindParams, Database, SqlJsStatic, SqlValue } from 'sql.js';
+import type { Database as SqlJsDatabaseHandle, SqlJsStatic } from 'sql.js';
 
-export type { BindParams, Database, SqlJsStatic, SqlValue };
+export type { SqlJsStatic };
 
+// The database the engine runs on — the smallest interface that covers what
+// it actually does with SQLite (MigrationPlan.md Phase 9): run statements,
+// read rows, export the whole database, close it. Every engine module
+// works through this and the helpers below (queryRows, queryRow,
+// withSavepoint), so the same simulation runs on either implementation:
+//   - sql.js (WebAssembly, in memory) — createDatabase() below; the tests'
+//     default and the original browser backend;
+//   - native SQLite (node:sqlite, file-backed) — db/sqlite.native.ts, used
+//     by the desktop game's simulation process.
+export type SqlValue = number | string | Uint8Array | null;
+export type BindParams = SqlValue[];
+
+export interface Database {
+  readonly backend: 'sqljs' | 'native';
+  // One statement with bound parameters, or — without parameters — any
+  // number of statements (migrations, BEGIN/COMMIT, SAVEPOINT…).
+  run(sql: string, params?: BindParams): void;
+  // Every row the statement returns, each as an array of column values.
+  query(sql: string, params?: BindParams): SqlValue[][];
+  // The whole database as a standalone SQLite file image.
+  export(): Uint8Array;
+  close(): void;
+}
+
+class SqlJsDatabase implements Database {
+  readonly backend = 'sqljs';
+  private readonly raw: SqlJsDatabaseHandle;
+
+  constructor(raw: SqlJsDatabaseHandle) {
+    this.raw = raw;
+  }
+
+  run(sql: string, params?: BindParams): void {
+    this.raw.run(sql, params);
+  }
+
+  // Deliberately built on prepare/step/free, NEVER sql.js's db.exec() —
+  // see queryRows below.
+  query(sql: string, params?: BindParams): SqlValue[][] {
+    const stmt = this.raw.prepare(sql);
+    const rows: SqlValue[][] = [];
+    try {
+      if (params !== undefined) stmt.bind(params);
+      while (stmt.step()) rows.push(stmt.get());
+    } finally {
+      stmt.free();
+    }
+    return rows;
+  }
+
+  export(): Uint8Array {
+    return this.raw.export();
+  }
+
+  close(): void {
+    this.raw.close();
+  }
+}
+
+// A sql.js database: empty, or opened from a saved file image.
 export function createDatabase(SQL: SqlJsStatic, bytes?: Uint8Array): Database {
-  return new SQL.Database(bytes);
+  return new SqlJsDatabase(new SQL.Database(bytes));
 }
 
 export function exportDatabase(db: Database): Uint8Array {
@@ -12,7 +72,7 @@ export function exportDatabase(db: Database): Uint8Array {
 
 // Measurement hook (perf/sqlProfiler.ts) — an observer per Database, absent
 // in normal play. A WeakMap rather than a field on the Database so nothing
-// here changes sql.js's own object shape.
+// here changes the database object's own shape.
 type QueryObserver = (sql: string, ms: number) => void;
 const queryObservers = new WeakMap<Database, QueryObserver>();
 
@@ -21,8 +81,8 @@ export function observeQueries(db: Database, observer: QueryObserver | null): vo
   else queryObservers.delete(db);
 }
 
-// Every SELECT in the engine goes through here. Deliberately built on
-// prepare/step/free, NEVER sql.js's db.exec():
+// Every SELECT in the engine goes through here. On sql.js it is
+// deliberately built on prepare/step/free, NEVER sql.js's db.exec():
 //
 // sql.js 1.14.1's Database.prototype.exec() does `stackAlloc(4)` for its
 // pzTail out-parameter with no matching stackSave()/stackRestore(), so every
@@ -46,14 +106,7 @@ export function observeQueries(db: Database, observer: QueryObserver | null): vo
 export function queryRows(db: Database, sql: string, params?: BindParams): SqlValue[][] {
   const observer = queryObservers.get(db);
   const start = observer ? performance.now() : 0;
-  const stmt = db.prepare(sql);
-  const rows: SqlValue[][] = [];
-  try {
-    if (params !== undefined) stmt.bind(params);
-    while (stmt.step()) rows.push(stmt.get());
-  } finally {
-    stmt.free();
-  }
+  const rows = db.query(sql, params);
   if (observer) observer(sql, performance.now() - start);
   return rows;
 }

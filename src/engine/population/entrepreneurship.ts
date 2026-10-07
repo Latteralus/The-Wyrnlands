@@ -17,9 +17,9 @@ import { tenureTerms } from '../world/tenure';
 import { WORKDAYS_PER_WEEK, weeklyFoodCost } from './cadence';
 import { listHouseholdMembers } from './households';
 import { getTrait } from './traits';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
 import type { Site } from '../world/sites';
-import type { Database } from 'sql.js';
 
 // NPC-founded businesses (DECISIONS.md, "Business founding"). Every
 // ENTREPRENEURSHIP_INTERVAL_DAYS, people with real savings weigh whether to

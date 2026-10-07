@@ -7,8 +7,8 @@ import { WORKDAYS_PER_WEEK } from '../population/cadence';
 import { getRecipeForSkill, type Recipe } from '../production/recipes';
 import { listAvailableSites } from '../world/tenure';
 import { listBusinessTypes, type BusinessType } from './businessTypes';
+import type { Database } from '../db/sqlite';
 import type { Site } from '../world/sites';
-import type { Database } from 'sql.js';
 
 // Business opportunity (§11.3 "expected benefit − cost − risk"), in two
 // layers:

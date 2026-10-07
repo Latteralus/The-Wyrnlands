@@ -1,7 +1,7 @@
 import { queryRow } from '../db/sqlite';
 import { destroyItem, findFirstActiveItem } from '../inventory/items';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Company-owned tools (§9.4) wear with use like a person's worn gear, but
 // aren't equipped via the gear/slot table — they simply live in the

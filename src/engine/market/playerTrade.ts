@@ -5,51 +5,13 @@ import { transferItem } from '../inventory/items';
 import { getBalance } from '../inventory/wallet';
 import { recordMarketActivity } from './activity';
 import { buyFromMarket, describeSources, getListing, marketStockContainerId, seedListing } from './market';
+import { marketTradeType, parseMarketTrade, type MarketTradeRequest } from './tradeTypes';
 import type { ActionRegistry } from '../actions/registry';
 import type { ActionDefinition } from '../actions/types';
-import type { Database } from 'sql.js';
+import type { Database } from '../db/sqlite';
 
-export type MarketTradeKind = 'buy' | 'list' | 'withdraw';
-export interface MarketTradeRequest {
-  kind: MarketTradeKind;
-  siteId: string;
-  goodType: string;
-  quantity: number;
-}
-
-// Parameters are persisted in the action type, so queued/in-progress trades
-// survive an engine export/reload without a transient closure or new queue schema.
-export function marketTradeType(request: MarketTradeRequest): string {
-  if (!Number.isSafeInteger(request.quantity) || request.quantity < 1 || request.quantity > 1000) {
-    throw new Error('Choose a whole quantity between 1 and 1000.');
-  }
-  const good = getGoodDefinition(request.goodType);
-  if (request.kind !== 'withdraw' && good.basePrice <= 0)
-    throw new Error('This good is not sold at the market.');
-  return `market:${request.kind}:${encodeURIComponent(request.siteId)}:${encodeURIComponent(request.goodType)}:${request.quantity}`;
-}
-
-export function parseMarketTrade(type: string): MarketTradeRequest | null {
-  if (!type.startsWith('market:')) return null;
-  const parts = type.split(':');
-  if (parts.length !== 5 || !['buy', 'list', 'withdraw'].includes(parts[1] ?? ''))
-    throw new Error('Invalid market action.');
-  const request: MarketTradeRequest = {
-    kind: parts[1] as MarketTradeKind,
-    siteId: decodeURIComponent(parts[2] ?? ''),
-    goodType: decodeURIComponent(parts[3] ?? ''),
-    quantity: Number(parts[4]),
-  };
-  marketTradeType(request);
-  return request;
-}
-
-export function actionLabel(type: string): string {
-  const trade = parseMarketTrade(type);
-  return trade
-    ? `${trade.kind === 'list' ? 'List for sale' : trade.kind === 'buy' ? 'Buy' : 'Withdraw'} ${trade.quantity} ${trade.goodType}`
-    : type.replaceAll('_', ' ');
-}
+export { actionLabel, marketTradeType, parseMarketTrade } from './tradeTypes';
+export type { MarketTradeKind, MarketTradeRequest } from './tradeTypes';
 
 function availableItems(db: Database, actorId: string, request: MarketTradeRequest): string[] {
   const withdrawing = request.kind === 'withdraw';

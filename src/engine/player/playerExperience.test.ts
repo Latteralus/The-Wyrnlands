@@ -553,8 +553,9 @@ describe('SQLite persistence and deterministic continuation', () => {
     expect(isBackgroundActor(restored.db, id)).toBe(false);
     expect(isBackgroundActor(restored.db, 'npc-0')).toBe(true);
     expect(restored.isAutonomous(id)).toBe(false);
-    expect(queryRows(restored.db, 'SELECT id FROM schema_migrations').map((r) => r[0])).toEqual(
-      migrations.map((m) => m.id),
+    // Every migration applied (0023 after any later ones, since the legacy save lacked it).
+    expect(queryRows(restored.db, 'SELECT id FROM schema_migrations ORDER BY id').map((r) => r[0])).toEqual(
+      migrations.map((m) => m.id).sort(),
     );
     expect(inspectConservation(restored.db, 0).passed).toBe(true);
     e.dispose();

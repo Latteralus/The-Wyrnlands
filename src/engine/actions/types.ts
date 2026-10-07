@@ -1,6 +1,6 @@
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
 import type { Rng } from '../rng';
-import type { Database } from 'sql.js';
 
 export type ActionStatus = 'queued' | 'in_progress' | 'complete' | 'failed' | 'interrupted' | 'cancelled';
 

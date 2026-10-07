@@ -2,8 +2,8 @@ import { getGoodDefinition } from '../goods/catalog';
 import { consumeActiveItems, countActiveItemsOfType, produceItem } from '../inventory/items';
 import { getBalance } from '../inventory/wallet';
 import { buyFromMarket, getListing } from '../market/market';
+import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
-import type { Database } from 'sql.js';
 
 // Household provisions (§10 "the household is the central economic unit:
 // ... shared money/food"): every household keeps a stock of what it eats
