@@ -33,6 +33,7 @@ describe('applyMigrations', () => {
       '0022_market_activity',
       '0023_player_experience',
       '0024_due_actions_index',
+      '0025_settlement_activities',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 

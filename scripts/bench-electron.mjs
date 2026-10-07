@@ -8,7 +8,7 @@
 // then times a full day skipped at once, and IPC round trips and payloads.
 // Drives the UI only, so it measures any architecture the same way.
 //
-//   node scripts/bench-electron.mjs [--seconds 20] [--packaged] [--sim-backend sqljs]
+//   node scripts/bench-electron.mjs [--seconds 20] [--packaged] [--sim-backend sqljs] [--world-file world.sqlite]
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
@@ -22,6 +22,8 @@ const seconds = secondsIndex >= 0 ? Number(process.argv[secondsIndex + 1]) : 20;
 const packaged = process.argv.includes('--packaged');
 const backendIndex = process.argv.indexOf('--sim-backend');
 const backendArgs = backendIndex >= 0 ? [`--sim-backend=${process.argv[backendIndex + 1]}`] : [];
+const worldIndex = process.argv.indexOf('--world-file');
+const worldFile = worldIndex >= 0 ? path.resolve(process.argv[worldIndex + 1]) : null;
 const userData = mkdtempSync(path.join(tmpdir(), 'wyrnlands-bench-'));
 
 const app = await electron.launch(
@@ -58,14 +60,24 @@ try {
   await page.getByLabel('Starting season').selectOption('0');
   await button('Begin your life').click();
   await page.getByRole('heading', { name: 'Edda Hale', exact: true }).waitFor();
+  if (worldFile) {
+    await app.evaluate(({ dialog }, file) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [file] });
+    }, worldFile);
+    await page.evaluate(async () => {
+      const imported = await window.wyrnlands.importSave();
+      if (imported.status !== 'imported') throw new Error(JSON.stringify(imported));
+      await window.wyrnlands.request('session.load', { saveId: imported.save.id });
+    });
+  }
   await button('Settlement').click();
 
   const results = [];
   for (const speed of [1, 4, 16]) {
     await page.evaluate(() => {
       window.__bench = { gaps: [], longTasks: [], clicks: [], last: performance.now(), running: true };
+      const b = window.__bench;
       const frame = (now) => {
-        const b = window.__bench;
         if (!b.running) return;
         b.gaps.push(now - b.last);
         b.last = now;
@@ -156,8 +168,8 @@ try {
     const before = await gameMinutes();
     await page.evaluate(() => {
       window.__skip = { gaps: [], last: performance.now(), running: true };
+      const s = window.__skip;
       const frame = (now) => {
-        const s = window.__skip;
         if (!s.running) return;
         s.gaps.push(now - s.last);
         s.last = now;
@@ -218,7 +230,7 @@ try {
       await time('view.log', { scope: 'personal', limit: 20 }, 100),
     ];
   });
-  console.log(JSON.stringify({ packaged, results, skips, ipc }, null, 2));
+  console.log(JSON.stringify({ packaged, worldFile, results, skips, ipc }, null, 2));
 } finally {
   await app.close().catch(() => {});
   rmSync(userData, { recursive: true, force: true });

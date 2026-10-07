@@ -77,6 +77,7 @@ export function stockUpOnBread(
   keep: number,
   tick: number,
   note: string,
+  destinationContainerId = buyerId,
 ) {
   const listing = getListing(db, 'market', 'bread');
   if (!listing || listing.quantity <= 0 || listing.price <= 0) return null;
@@ -84,7 +85,11 @@ export function stockUpOnBread(
   const affordable = Math.floor(Math.max(0, getBalance(db, buyerId) - keep) / listing.price);
   const units = Math.min(want, affordable, listing.quantity);
   if (units <= 0) return null;
-  return buyFromMarket(db, bus, buyerId, 'market', 'bread', units, tick, { note, scope: 'business' });
+  return buyFromMarket(db, bus, buyerId, 'market', 'bread', units, tick, {
+    note,
+    scope: 'business',
+    destinationContainerId,
+  });
 }
 
 export interface HouseholdProvisioning {
@@ -100,10 +105,11 @@ export function provisionHousehold(
   household: { id: string; name: string },
   memberCount: number,
   tick: number,
+  replenish = true,
 ): HouseholdProvisioning {
   const pailsPerDay = Math.ceil(memberCount * WATER_PAILS_PER_PERSON_PER_DAY);
   // Today's drinking plus the store to keep.
-  drawWater(db, bus, household.id, pailsPerDay * (supplyDays('water', false) + 1), tick);
+  if (replenish) drawWater(db, bus, household.id, pailsPerDay * (supplyDays('water', false) + 1), tick);
   const drunk = consumeActiveItems(db, bus, household.id, 'water', pailsPerDay, tick, {
     note: `${household.name} drinks.`,
     scope: 'business',
@@ -115,15 +121,16 @@ export function provisionHousehold(
   const fullTarget = breadPerDay * (supplyDays('bread', true) + 1);
   const minCost = Math.max(0, minTarget - countActiveItemsOfType(db, household.id, 'bread')) * breadPrice;
   const spare = getBalance(db, household.id) - minCost >= PROVISION_SPARE_RESERVE + fullTarget * breadPrice;
-  stockUpOnBread(
-    db,
-    bus,
-    household.id,
-    spare ? fullTarget : minTarget,
-    0,
-    tick,
-    `${household.name} buys bread at the market.`,
-  );
+  if (replenish)
+    stockUpOnBread(
+      db,
+      bus,
+      household.id,
+      spare ? fullTarget : minTarget,
+      0,
+      tick,
+      `${household.name} buys bread at the market.`,
+    );
   const fed = consumeActiveItems(db, bus, household.id, 'bread', breadPerDay, tick, {
     note: `${household.name} eats.`,
     scope: 'business',

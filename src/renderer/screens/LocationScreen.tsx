@@ -64,6 +64,7 @@ export function LocationScreen({ view, onBack, onOpenJobs, onSelectNpc }: Locati
           {present.map((entity) => (
             <button key={entity.entityId} type="button" onClick={() => onSelectNpc(entity.entityId)}>
               {entity.name}
+              {entity.activity && <small> · {entity.activity}</small>}
             </button>
           ))}
         </div>

@@ -100,7 +100,7 @@ function triggerCollapse(
   need: NeedKey,
   tick: number,
 ): void {
-  interruptCurrentAction(db, bus, entityId, tick);
+  interruptCurrentAction(db, bus, entityId, tick, registry);
   cancelQueuedActions(db, bus, entityId, tick);
   bus.emit({
     tick,

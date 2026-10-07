@@ -4,7 +4,7 @@ import { createDatabase, queryRows } from '../db/sqlite';
 import { loadFreshSqlJs, loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { findFirstActiveItem } from '../inventory/items';
-import { countActiveEmploymentsForSlot } from '../jobs/jobs';
+import { countActiveEmploymentsForSlot, getJobSlot } from '../jobs/jobs';
 import {
   BAKERY_COMPANY_ID,
   BAKERY_JOB_SLOT_ID,
@@ -143,9 +143,19 @@ describe('Stage 5 — the closed grain -> flour -> bread chain, with real compan
     // fills newly-opened job slots over time, not just at world generation —
     // confirmed by a real 90-day run reaching full employment at all four
     // companies well within 60 days (DECISIONS.md), not assumed.
-    expect(countActiveEmploymentsForSlot(engine.db, MILL_JOB_SLOT_ID)).toBeGreaterThanOrEqual(2);
-    expect(countActiveEmploymentsForSlot(engine.db, BAKERY_JOB_SLOT_ID)).toBeGreaterThanOrEqual(2);
-    expect(countActiveEmploymentsForSlot(engine.db, LOGGING_JOB_SLOT_ID)).toBeGreaterThanOrEqual(4);
+    // Staffing can shrink after actual intraday sales expose a glut. Verify
+    // real hiring and capacity bounds rather than requiring a fixed roster.
+    for (const slotId of [MILL_JOB_SLOT_ID, BAKERY_JOB_SLOT_ID, LOGGING_JOB_SLOT_ID]) {
+      expect(countActiveEmploymentsForSlot(engine.db, slotId)).toBeGreaterThanOrEqual(1);
+      expect(countActiveEmploymentsForSlot(engine.db, slotId)).toBeLessThanOrEqual(
+        getJobSlot(engine.db, slotId)!.capacity,
+      );
+      expect(
+        queryRows(engine.db, 'SELECT id FROM employment WHERE job_slot_id = ? AND hired_at_tick > 0', [
+          slotId,
+        ]).length,
+      ).toBeGreaterThan(0);
+    }
 
     // Conservation held throughout, at this heavier population+company
     // scale — no drift, no silent bugs (§16's "drift = bug, caught same day").

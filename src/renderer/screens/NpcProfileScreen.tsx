@@ -7,7 +7,7 @@ import {
   type ProfileNavigation,
 } from '../components/ProfileParts';
 import { SceneHeader } from '../components/SceneHeader';
-import { capitalize, describeTrait, formatDate } from '../components/profileFormat';
+import { capitalize, describeTrait, formatDate, formatTimestamp } from '../components/profileFormat';
 import { useCalendarAt, useCalendar, useView } from '../sim/hooks';
 import type { Needs } from '../../shared/protocol';
 
@@ -74,6 +74,11 @@ export function NpcProfileScreen({
       </div>
 
       <p className="npc-condition">{describeCondition(needs)}</p>
+      {profile.activity && (
+        <p>
+          {profile.activity.label} · until {formatTimestamp(calendarAt, profile.activity.endsAtTick)}
+        </p>
+      )}
 
       <h3>Occupation</h3>
       {current ? (

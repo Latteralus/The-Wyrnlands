@@ -126,6 +126,22 @@ export function BusinessScreen({
           <p className={`business-status business-status--${profile.status}`}>
             {capitalize(profile.kind)} · tier {profile.tier} · {STATUS_TEXT[profile.status]}
           </p>
+          {profile.status !== 'closed' && (
+            <p>
+              {profile.workersPresent} of {profile.staff.length} staff on site.
+            </p>
+          )}
+          {profile.activity && (
+            <p>
+              {profile.activity.label} · until {formatTimestamp(calendarAt, profile.activity.endsAtTick)}
+            </p>
+          )}
+          {profile.inTransit.length > 0 && (
+            <p>
+              On the way to market:{' '}
+              {profile.inTransit.map((line) => `${line.count} ${line.goodType}`).join(', ')}.
+            </p>
+          )}
           {profile.ownerId && (
             <p className="business-owner">
               {profile.managerId ? 'Owned by ' : 'Run by '}

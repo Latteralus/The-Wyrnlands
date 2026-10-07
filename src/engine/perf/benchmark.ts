@@ -27,6 +27,10 @@ export const FINGERPRINT_QUERIES = [
   'SELECT site_id, good_type, price, quantity, producer_company_id FROM market_listings ORDER BY site_id, good_type',
   'SELECT (SELECT COUNT(*) FROM event_log), (SELECT COUNT(*) FROM provenance_events), (SELECT COUNT(*) FROM actions), (SELECT COUNT(*) FROM company_ledger_entries)',
   'SELECT tick, rng_state, goods_created, goods_destroyed, coin_faucet_total, coin_sink_total FROM world_meta',
+  'SELECT id, current_site_id FROM entities ORDER BY id',
+  'SELECT * FROM settlement_activity_state ORDER BY actor_id',
+  'SELECT id, price_adjustment FROM market_listings ORDER BY id',
+  "SELECT actor_id, type, status, started_at_tick, ends_at_tick, duration_ticks, payload FROM actions WHERE status IN ('queued', 'in_progress') ORDER BY actor_id, sequence",
 ] as const;
 
 // Syncs the RNG state into world_meta first, so it is part of the state.

@@ -32,6 +32,7 @@ import {
   createHousehold,
   departHousehold,
   getHouseholdIdForMember,
+  getHousehold,
   listHouseholdMembers,
   listHouseholds,
   setHouseholdDestitution,
@@ -43,18 +44,15 @@ import { provisionHousehold } from './provisions';
 import type { Database } from '../db/sqlite';
 import type { EventBus } from '../eventBus';
 
-// Background aggregation (§4.2): NPC needs, wages, skill gain, and consumption
-// resolve in daily/weekly passes rather than through per-tick action queues.
-// This keeps the cost proportional to households/employments per day.
-// Explicit simulation_mode selects the cadence independently of household
-// membership: the named player can live in a household and remain foreground.
-// The historical WASM-stack failure is fixed (PERFORMANCE_AUDIT.md); coarse
-// NPC simulation remains the intended scale/performance architecture.
+// Shared economic rules for household budgets, hiring and migration. The
+// active Engine uses timed activities for labor, meals, rest and provisioning;
+// aggregate entry points remain for isolated economic experiments/tests.
+// Explicit simulation_mode keeps the named player's needs in the foreground.
 //
 // Routine NPC transactions (buying bread, paying wages) go through the same
 // produceItem/destroyItem/faucetCoin/etc. functions as the player's — that's
 // what keeps the conservation audit correct — but pass scope: 'business',
-// which nothing currently renders in any UI panel. That keeps the player's
+// which appears in the business/household history. That keeps the player's
 // own personal log free of ~20 households' worth of daily grocery noise.
 // scope: 'settlement' is reserved for genuine life events (hired, dismissed,
 // a household's adaptation-ladder rung) — matching §14.3's settlement log
@@ -178,7 +176,7 @@ function findSellableBelonging(db: Database, householdId: string) {
 // member works" and "migrate" are named in §10 but not modeled yet (no NPC
 // job-seeking behavior exists this stage — see DECISIONS.md); flagged, not
 // silently dropped.
-function evaluateHouseholdBudget(
+export function evaluateHouseholdBudget(
   db: Database,
   bus: EventBus,
   household: Household,
@@ -264,7 +262,7 @@ function evaluateHouseholdBudget(
 // of a 730-day run, 2,645 coin stranded across 14 workers' wallets vs. 184
 // left across all 24 household purses). This sweep also recovers exactly
 // that stranded coin in older saves. A transfer, not a faucet — conserved.
-function poolMemberCoin(
+export function poolMemberCoin(
   db: Database,
   bus: EventBus,
   household: Household,
@@ -296,6 +294,7 @@ export function applyHouseholdDailyCadence(
   bus: EventBus,
   tick: number,
   exposedToCold: boolean,
+  scheduled = false,
 ): void {
   for (const household of listHouseholds(db)) {
     if (household.departedAtTick !== null) continue; // §11.4 — gone, nothing left to simulate
@@ -303,9 +302,21 @@ export function applyHouseholdDailyCadence(
     if (members.length === 0) continue;
 
     poolMemberCoin(db, bus, household, members, tick);
-    const fedCount = feedHousehold(db, bus, household, members, tick);
-    const warm = exposedToCold ? heatHousehold(db, bus, household, tick) : true;
-    for (const entityId of members) applyDailyRestAndWarmth(db, entityId, !warm);
+    const fedCount = scheduled
+      ? Number(
+          queryRow(
+            db,
+            `SELECT COUNT(*) FROM settlement_activity_state
+          WHERE actor_id IN (SELECT entity_id FROM household_members WHERE household_id = ?)
+          AND fed_day = ?`,
+            [household.id, Math.floor(tick / MINUTES_PER_DAY) - 1],
+          )?.[0] ?? 0,
+        )
+      : feedHousehold(db, bus, household, members, tick);
+    if (!scheduled) {
+      const warm = exposedToCold ? heatHousehold(db, bus, household, tick) : true;
+      for (const entityId of members) applyDailyRestAndWarmth(db, entityId, !warm);
+    }
     if (fedCount < members.length) {
       bus.emit({
         tick,
@@ -317,7 +328,7 @@ export function applyHouseholdDailyCadence(
       });
     }
 
-    evaluateHouseholdBudget(db, bus, household, members.length, tick);
+    if (!scheduled) evaluateHouseholdBudget(db, bus, household, members.length, tick);
 
     // §11.4/§10's "migrate" rung: destitute = no employed member and living
     // hand to mouth (under twice the charity threshold) after this day's
@@ -348,6 +359,47 @@ export function applyHouseholdDailyCadence(
     // put a real meal in front of everyone (see households.ts's hungerDays).
     recordHouseholdFedDay(db, household.id, fedCount >= members.length);
   }
+}
+
+// Scheduled dinner consumes only delivered stores. Shopping and water fetching
+// are distinct actions; an empty shelf cannot conjure a meal at home.
+export function eatNpcMeal(db: Database, bus: EventBus, actorId: string, tick: number, cold: boolean): void {
+  const householdId = getHouseholdIdForMember(db, actorId);
+  const household = householdId ? getHousehold(db, householdId) : null;
+  if (!household || household.departedAtTick !== null) return;
+  const day = Math.floor(tick / MINUTES_PER_DAY);
+  const bread = findFirstActiveItem(db, household.id, 'bread');
+  if (bread)
+    destroyItem(db, bus, bread.id, 'consumed', tick, { actorId, scope: 'business', note: 'Dinner at home.' });
+  directSetNeed(db, actorId, 'hunger', bread ? WELL_FED_HUNGER : SUBSISTENCE_HUNGER);
+  db.run('UPDATE settlement_activity_state SET last_meal_day = ?, fed_day = ? WHERE actor_id = ?', [
+    day,
+    bread ? day : null,
+    actorId,
+  ]);
+  const serviced = queryRow(db, 'SELECT last_meal_day FROM settlement_activity_state WHERE actor_id = ?', [
+    household.id,
+  ]);
+  if (serviced?.[0] === day) return;
+  db.run('UPDATE settlement_activity_state SET last_meal_day = ? WHERE actor_id = ?', [day, household.id]);
+  const members = listHouseholdMembers(db, household.id).filter((id) => isBackgroundActor(db, id));
+  const pails = Math.ceil(members.length * 2.4);
+  const water = listActiveItemsInContainer(db, household.id)
+    .filter((i) => i.type === 'water')
+    .slice(0, pails);
+  for (const item of water)
+    destroyItem(db, bus, item.id, 'consumed', tick, { scope: 'business', note: 'Household drinking water.' });
+  const fuel = cold ? findFirstActiveItem(db, household.id, 'firewood') : null;
+  if (fuel)
+    destroyItem(db, bus, fuel.id, 'consumed', tick, { scope: 'business', note: 'The evening hearth.' });
+  for (const member of members) {
+    directSetNeed(db, member, 'thirst', water.length >= pails ? 100 : 50);
+    directAdjustNeed(db, member, 'warmth', cold && !fuel ? -DAILY_WARMTH_SHIFT : DAILY_WARMTH_SHIFT);
+  }
+}
+
+export function restNpc(db: Database, actorId: string): void {
+  directAdjustNeed(db, actorId, 'energy', DAILY_ENERGY_REST);
 }
 
 // §8.2: the weekly tithe that funds the parish's charity (see PARISH_ID).
@@ -522,6 +574,7 @@ export function applyNpcJobSeekingWeeklyCadence(
   bus: EventBus,
   tick: number,
   rng: () => number,
+  offer?: (entityId: string, slotId: string, strained: boolean) => void,
 ): void {
   // Best-paying openings first (ties in listing order): with more openings
   // than people looking, the employer offering more gets the hands — the
@@ -529,7 +582,14 @@ export function applyNpcJobSeekingWeeklyCadence(
   const remainingCapacity = new Map<string, number>();
   const openings = listJobOpenings(db).sort((a, b) => b.wageMin - a.wageMin);
   for (const slot of openings) {
-    const remaining = slot.capacity - countActiveEmploymentsForSlot(db, slot.id);
+    const pending = offer
+      ? Number(
+          queryRow(db, 'SELECT COUNT(*) FROM settlement_activity_state WHERE offered_job_slot_id = ?', [
+            slot.id,
+          ])?.[0] ?? 0,
+        )
+      : 0;
+    const remaining = slot.capacity - countActiveEmploymentsForSlot(db, slot.id) - pending;
     if (remaining > 0) remainingCapacity.set(slot.id, remaining);
   }
   if (remainingCapacity.size === 0) return;
@@ -546,12 +606,20 @@ export function applyNpcJobSeekingWeeklyCadence(
     for (const memberId of listHouseholdMembers(db, household.id).filter((id) => isBackgroundActor(db, id))) {
       if (remainingCapacity.size === 0) return;
       if (getActiveEmployment(db, memberId)) continue;
+      if (
+        offer &&
+        queryRow(db, 'SELECT offered_job_slot_id FROM settlement_activity_state WHERE actor_id = ?', [
+          memberId,
+        ])?.[0]
+      )
+        continue;
 
       const [slotId] = remainingCapacity.entries().next().value ?? [];
       if (!slotId) return;
 
-      applyForJob(db, bus, memberId, slotId, tick, { haggle: rng() < 0.5, scope: 'settlement' }, rng);
-      if (strained) {
+      if (offer) offer(memberId, slotId, strained);
+      else applyForJob(db, bus, memberId, slotId, tick, { haggle: rng() < 0.5, scope: 'settlement' }, rng);
+      if (strained && !offer) {
         bus.emit({
           tick,
           scope: 'settlement',
@@ -613,6 +681,14 @@ function tryEmigrateHousehold(
   // An owner doesn't walk away from a business that's still open — it
   // fails first (companies/decisions.ts), and then they're free to go.
   if (ownsOpenCompany(db, members)) return;
+  bus.emit({
+    tick,
+    scope: 'business',
+    actorId: household.id,
+    type: 'household.departing',
+    message: '',
+    detail: true,
+  });
 
   // Defensive, not load-bearing: destitution already requires zero employed
   // members, but a departing household shouldn't leave a dangling job behind

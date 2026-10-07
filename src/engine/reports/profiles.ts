@@ -21,6 +21,7 @@ import {
   weeklyFoodCost,
 } from '../population/cadence';
 import { getHousehold, getHouseholdIdForMember, listHouseholdMembers } from '../population/households';
+import { getActivitySnapshot, listPresentEntities, type ActivitySnapshot } from '../population/presence';
 import { peekTrait } from '../population/traits';
 import { listSkills, type SkillRecord } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
@@ -153,6 +154,7 @@ function companyRoles(db: Database, entityId: string): CompanyRole[] {
 export interface PersonProfile {
   id: string;
   name: string;
+  activity: ActivitySnapshot | null;
   householdId: string | null;
   householdName: string | null;
   householdWealth: WealthBand | null;
@@ -240,6 +242,10 @@ export function getPersonProfile(db: Database, entityId: string): PersonProfile 
   return {
     id: entityId,
     name: getEntityName(db, entityId),
+    activity:
+      household?.departedAtTick !== null && household?.departedAtTick !== undefined
+        ? null
+        : getActivitySnapshot(db, entityId),
     householdId,
     householdName: household?.name ?? null,
     householdWealth: householdCoin === null ? null : wealthBand(householdCoin),
@@ -367,6 +373,9 @@ export interface BusinessProfile {
   foundingReasons: string[];
   closedTick: number | null;
   staff: StaffMember[];
+  activity: ActivitySnapshot | null;
+  workersPresent: number;
+  inTransit: InventoryLine[];
   // What's on the premises — goods anyone walking past could see.
   stock: InventoryLine[];
   inspect: {
@@ -433,6 +442,11 @@ export function getBusinessProfile(db: Database, companyId: string, tick: number
     foundingReasons: Array.isArray(reasons) ? reasons.map(String) : [],
     closedTick: company.closedAtTick,
     staff,
+    activity: company.closedAtTick === null ? getActivitySnapshot(db, companyId) : null,
+    workersPresent: listPresentEntities(db, company.siteId, 0).filter((person) =>
+      staff.some((member) => member.id === person.entityId),
+    ).length,
+    inTransit: listInventory(db, `freight:${companyId}`),
     stock: listInventory(db, companyId),
     inspect: {
       cash: getBalance(db, companyId),

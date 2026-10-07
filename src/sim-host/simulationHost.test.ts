@@ -194,11 +194,11 @@ describe.each(BACKENDS)('simulation host ($name) — determinism', ({ storage })
     const t = track(await createTestHost({ storage: await storage() }));
     const c = t.connect();
     await c.request('session.newGame', NEW_GAME);
+    const slot = (await c.request('view.jobs')).openings.find((o) => o.vacancies > 0)?.id ?? '';
+    await c.request('player.applyForJob', { jobSlotId: slot, haggle: true });
     await c.request('clock.setSpeed', { speed: 16 });
     t.timers.advance(BATCH_INTERVAL_MS * 7); // 560 ticks in 7 batches
     await c.request('clock.setSpeed', { speed: 'paused' });
-    const slot = (await c.request('view.jobs')).openings.find((o) => o.vacancies > 0)?.id ?? '';
-    await c.request('player.applyForJob', { jobSlotId: slot, haggle: true }); // draws from the RNG
     await c.request('clock.skipToMorning'); // to 1440 in one batch
     await c.request('clock.setSpeed', { speed: 4 });
     t.timers.advance(BATCH_INTERVAL_MS * 9); // + 180
@@ -207,8 +207,8 @@ describe.each(BACKENDS)('simulation host ($name) — determinism', ({ storage })
     await c.request('session.close');
 
     const headless = createNewGame(createDatabase(SQL), NEW_GAME);
-    for (let i = 0; i < 560; i += 37) headless.advanceTicks(Math.min(37, 560 - i)); // different batches
     headless.applyForJob(headless.getPlayerEntityId(), slot, { haggle: true });
+    for (let i = 0; i < 560; i += 37) headless.advanceTicks(Math.min(37, 560 - i)); // different batches
     for (let i = 0; i < 2 * MINUTES_PER_DAY - 560; i++) headless.advanceTicks(1); // one tick at a time
     expect(headless.tick).toBe(2 * MINUTES_PER_DAY);
     const expected = canonicalState(headless);
@@ -241,9 +241,9 @@ describe.each(BACKENDS)('simulation host ($name) — saves', ({ storage }) => {
     const t = track(await createTestHost({ storage: await storage() }));
     const c = t.connect();
     await c.request('session.newGame', NEW_GAME);
-    await c.request('clock.skipToMorning');
     const slot = (await c.request('view.jobs')).openings.find((o) => o.vacancies > 0)?.id ?? '';
     await c.request('player.applyForJob', { jobSlotId: slot, haggle: false });
+    await c.request('clock.skipToMorning');
     const before = await c.request('view.character');
     // Application exit.
     t.host.shutdown();

@@ -3,6 +3,7 @@ release
 dist
 node_modules
 coverage
+logs
 *.sqlite
 
 # Hand-authored prose docs — keep their own formatting conventions.

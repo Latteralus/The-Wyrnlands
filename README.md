@@ -1,6 +1,6 @@
 # The Wyrnlands
 
-Offline medieval life-simulation / economic sandbox, played as a desktop app. Read [MASTERPLAN.md](./Documents/MASTERPLAN.md) for the design and [DECISIONS.md](./Documents/DECISIONS.md) for where the code diverges from or refines it. [PERFORMANCE_AUDIT.md](./Documents/PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./Documents/Archive/STAGE5_AUDIT.md) record the performance work and the state of the Stage 5 economy; [ScheduledActivityPlan.md](./Documents/Archive/ScheduledActivityPlan.md) is the plan for NPCs and businesses that act through the day. (Documents and archived plans are under ./Documents/.)
+Offline medieval life-simulation / economic sandbox, played as a desktop app. Read [MASTERPLAN.md](./Documents/MASTERPLAN.md) for the design and [DECISIONS.md](./Documents/DECISIONS.md) for where the code diverges from or refines it. [SETTLEMENT_ACTIVITIES.md](./SETTLEMENT_ACTIVITIES.md) records the implemented timed NPC/business activities, cadence audit and performance/economy comparisons. [PERFORMANCE_AUDIT.md](./Documents/PERFORMANCE_AUDIT.md) and [STAGE5_AUDIT.md](./Documents/Archive/STAGE5_AUDIT.md) record earlier performance and economy work. Other documents and archived plans are under ./Documents/.
 
 [Documentation guide](./Documents/README.md) distinguishes current desktop references, future gameplay plans and historical browser-era records. [Player validation](./Documents/PLAYER_VALIDATION.md) records the latest desktop coverage; the archived Stage 5 audit records earlier economy findings, not the current implementation status.
 
@@ -47,6 +47,7 @@ npm run sim:perf -- --days 730 --sample 30 [--no-player] [--named-player] [--eco
 npm run sim:perf:electron -- --backend native [--db-file world.sqlite] --days 365 …
                          # the harness on Electron's Node, on native SQLite (in memory, or file-backed like the game)
 npm run bench:app        # the running game at 1×/4×/16×: frame gaps, input latency, CPU, memory per process
+npm run sim:activities   # clock-sized activity batches at three population/business sizes and 1×/4×/16×
 npm run bench:renderer   # the engine inside a Chromium page, as it ran before the desktop migration
 ```
 

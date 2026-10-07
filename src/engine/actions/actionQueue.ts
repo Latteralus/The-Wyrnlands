@@ -8,7 +8,7 @@ import type { ActionOutcome, ActionStatus, QueuedAction } from './types';
 import type { Database } from '../db/sqlite';
 
 const COLUMNS =
-  'id, actor_id, type, status, queued_at_tick, started_at_tick, ends_at_tick, duration_ticks, progress_ticks, outcome, sequence';
+  'id, actor_id, type, status, queued_at_tick, started_at_tick, ends_at_tick, duration_ticks, progress_ticks, outcome, sequence, payload, transient';
 
 function rowToAction(row: unknown[]): QueuedAction {
   return {
@@ -23,6 +23,8 @@ function rowToAction(row: unknown[]): QueuedAction {
     progressTicks: Number(row[8]),
     outcome: typeof row[9] === 'string' ? (JSON.parse(row[9]) as ActionOutcome) : null,
     sequence: Number(row[10]),
+    payload: typeof row[11] === 'string' ? (JSON.parse(row[11]) as Record<string, unknown>) : null,
+    transient: Boolean(row[12]),
   };
 }
 
@@ -88,13 +90,22 @@ export function enqueueAction(
   actorId: string,
   type: string,
   currentTick: number,
+  options: { durationTicks?: number; payload?: Record<string, unknown>; transient?: boolean } = {},
 ): number {
   const definition = registry.get(type); // throws on an unregistered type
   const sequence = getNextSequence(db, actorId);
   db.run(
-    `INSERT INTO actions (actor_id, type, status, queued_at_tick, duration_ticks, progress_ticks, sequence)
-     VALUES (?, ?, 'queued', ?, ?, 0, ?)`,
-    [actorId, type, currentTick, definition.durationTicks, sequence],
+    `INSERT INTO actions (actor_id, type, status, queued_at_tick, duration_ticks, progress_ticks, sequence, payload, transient)
+     VALUES (?, ?, 'queued', ?, ?, 0, ?, ?, ?)`,
+    [
+      actorId,
+      type,
+      currentTick,
+      options.durationTicks ?? definition.durationTicks,
+      sequence,
+      options.payload ? JSON.stringify(options.payload) : null,
+      options.transient ? 1 : 0,
+    ],
   );
   const row = queryRow(db, 'SELECT last_insert_rowid()');
   return Number(row?.[0]);
@@ -114,12 +125,15 @@ function startAction(
     endsAtTick,
     action.id,
   ]);
-  const startMessage = registry.get(action.type).startMessage?.({
+  const ctx = {
     db,
     bus,
     actorId: action.actorId,
     tick: currentTick,
-  });
+    action: { ...action, status: 'in_progress' as const, startedAtTick: currentTick, endsAtTick },
+  };
+  registry.get(action.type).onStart?.(ctx);
+  const startMessage = registry.get(action.type).startMessage?.(ctx);
   bus.emit({
     tick: currentTick,
     scope: 'personal',
@@ -127,7 +141,7 @@ function startAction(
     type: 'action.started',
     message: startMessage ?? `${getEntityName(db, action.actorId)} begins ${action.type.replace(/_/g, ' ')}.`,
     data: { actionType: action.type },
-    detail: startMessage === undefined,
+    detail: action.transient || startMessage === undefined,
   });
 }
 
@@ -140,7 +154,7 @@ function resolveAction(
   currentTick: number,
 ): void {
   const definition = registry.get(action.type);
-  const ctx = { db, bus, actorId: action.actorId, tick: currentTick };
+  const ctx = { db, bus, actorId: action.actorId, tick: currentTick, action };
   const outcome = definition.resolve(rng, ctx);
   const status: ActionStatus = outcome.success ? 'complete' : 'failed';
   db.run('UPDATE actions SET status = ?, progress_ticks = ?, outcome = ? WHERE id = ?', [
@@ -158,10 +172,11 @@ function resolveAction(
         type: outcome.success ? 'action.completed' : 'action.failed',
         message: outcome.message,
       },
-      { data: outcome.data, detail: outcome.quiet },
+      { data: outcome.data, detail: action.transient || outcome.quiet },
     ),
   );
   definition.applyOutcome?.(ctx, outcome);
+  if (action.transient) db.run('DELETE FROM actions WHERE id = ?', [action.id]);
 }
 
 // Runs one actor's queue forward by one tick. Chains transitions (a
@@ -175,10 +190,10 @@ export function processActorActions(
   rng: Rng,
   actorId: string,
   currentTick: number,
-): void {
+): boolean {
   for (;;) {
     const action = getCurrentAction(db, actorId);
-    if (!action) return;
+    if (!action) return true;
 
     if (action.status === 'queued') {
       startAction(db, bus, registry, action, currentTick);
@@ -200,7 +215,7 @@ export function processActorActions(
       // resolution (resolveAction below) and on interruption
       // (interruptCurrentAction) — the only two moments anything persisted
       // actually needs to be correct.
-      return;
+      return false;
     }
 
     resolveAction(db, bus, registry, rng, action, currentTick);
@@ -214,6 +229,7 @@ export function cancelQueuedActions(db: Database, bus: EventBus, actorId: string
   const queued = queryRows(db, "SELECT id FROM actions WHERE actor_id = ? AND status = 'queued'", [actorId]);
   if (queued.length === 0) return;
   db.run("UPDATE actions SET status = 'cancelled' WHERE actor_id = ? AND status = 'queued'", [actorId]);
+  db.run("DELETE FROM actions WHERE actor_id = ? AND status = 'cancelled' AND transient = 1", [actorId]);
   bus.emit({
     tick: currentTick,
     scope: 'personal',
@@ -233,6 +249,7 @@ export function interruptCurrentAction(
   bus: EventBus,
   actorId: string,
   currentTick: number,
+  registry?: ActionRegistry,
 ): void {
   const action = getCurrentAction(db, actorId);
   if (!action || action.status !== 'in_progress') return;
@@ -244,6 +261,7 @@ export function interruptCurrentAction(
     progressTicks,
     action.id,
   ]);
+  registry?.get(action.type).onInterrupt?.({ db, bus, actorId, tick: currentTick, action });
   bus.emit({
     tick: currentTick,
     scope: 'personal',
@@ -253,5 +271,7 @@ export function interruptCurrentAction(
       ? `You break off what you were doing, ${Math.round(fraction * 100)}% done.`
       : `${getEntityName(db, actorId)} breaks off what they were doing.`,
     data: { fraction, actionType: action.type },
+    detail: action.transient,
   });
+  if (action.transient) db.run('DELETE FROM actions WHERE id = ?', [action.id]);
 }

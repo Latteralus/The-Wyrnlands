@@ -23,11 +23,14 @@ export interface ActionEffectContext {
   bus: EventBus;
   actorId: string;
   tick: number;
+  action?: QueuedAction;
 }
 
 export interface ActionDefinition {
   type: string;
   durationTicks: number;
+  onStart?: (ctx: ActionEffectContext) => void;
+  onInterrupt?: (ctx: ActionEffectContext) => void;
   // A line for the actor's log when they set about it ("You head to Oster
   // Farm for your shift.") — omit it and starting is bookkeeping, not news:
   // the completion line tells the story.
@@ -59,4 +62,6 @@ export interface QueuedAction {
   progressTicks: number;
   outcome: ActionOutcome | null;
   sequence: number;
+  payload: Record<string, unknown> | null;
+  transient: boolean;
 }

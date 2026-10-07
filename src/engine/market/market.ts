@@ -217,10 +217,11 @@ export function sellSurplusToMarket(
   quantity: number,
   unitPrice: number,
   tick: number,
+  sourceContainerId = companyId,
 ): number {
   let sold = 0;
   for (let i = 0; i < quantity; i++) {
-    const item = findFirstActiveItem(db, companyId, goodType);
+    const item = findFirstActiveItem(db, sourceContainerId, goodType);
     if (!item) break;
     transferItem(db, bus, item.id, marketStockContainerId(siteId), tick, {
       actorId: companyId,
@@ -368,7 +369,7 @@ export function buyFromMarket(
   goodType: string,
   quantity: number,
   tick: number,
-  options: { actorId?: string; note?: string; scope?: EventScope } = {},
+  options: { actorId?: string; note?: string; scope?: EventScope; destinationContainerId?: string } = {},
 ): MarketPurchase {
   const listing = getListing(db, siteId, goodType);
   const units = Math.min(quantity, listing?.quantity ?? 0);
@@ -432,7 +433,7 @@ export function buyFromMarket(
       db,
       bus,
       unit.itemId,
-      buyerId,
+      options.destinationContainerId ?? buyerId,
       tick,
       withOptional({ note, scope }, { actorId: options.actorId }),
     );
@@ -448,7 +449,14 @@ export function buyFromMarket(
       db,
       bus,
       withOptional(
-        { id: itemId, type: goodType, containerId: buyerId, tick, note: `${note} (merchant import)`, scope },
+        {
+          id: itemId,
+          type: goodType,
+          containerId: options.destinationContainerId ?? buyerId,
+          tick,
+          note: `${note} (merchant import)`,
+          scope,
+        },
         { actorId: options.actorId, durability: maxDurability },
       ),
     );

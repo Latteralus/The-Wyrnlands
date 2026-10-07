@@ -200,6 +200,17 @@ try {
   );
   await u.shot('home');
 
+  // NPCs now apply during the day; claim the initial vacancy before advancing
+  // the world, rather than assuming it is reserved for the player tomorrow.
+  step('take a job');
+  await u.click('Work / Jobs');
+  await page
+    .getByRole('button', { name: /Accept posted wage/ })
+    .and(page.locator(':enabled'))
+    .first()
+    .click();
+  await u.button('Quit your job').waitFor();
+
   step('the clock runs at 16×, pauses, and skips to morning');
   await u.click('Settlement');
   const before = await u.sceneTime();
@@ -221,15 +232,6 @@ try {
     { timeout: 15_000 },
   );
   await u.shot('settlement');
-
-  step('take a job');
-  await u.click('Work / Jobs');
-  await page
-    .getByRole('button', { name: /Accept posted wage/ })
-    .and(page.locator(':enabled'))
-    .first()
-    .click();
-  await u.button('Quit your job').waitFor();
 
   step('profiles: household, person (Inspect), business, chronicle, market');
   await u.click('Settlement');

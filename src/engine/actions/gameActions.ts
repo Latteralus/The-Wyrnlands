@@ -361,7 +361,7 @@ export function playerRoutine(
   const shiftDue =
     prefs.attendWork &&
     employment !== null &&
-    isWorkday(tick) &&
+    isWorkday(tick + MINUTES_PER_DAY) &&
     lastShiftDay !== today &&
     hour >= WORK_START_HOUR &&
     hour < WORK_LAST_START_HOUR;

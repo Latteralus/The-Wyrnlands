@@ -167,7 +167,9 @@ function isGlutted(db: Database, companyId: string, goodType: string): boolean {
 }
 
 function unsoldOutput(db: Database, companyId: string, goodType: string): number {
-  const own = countActiveItemsOfType(db, companyId, goodType);
+  const own =
+    countActiveItemsOfType(db, companyId, goodType) +
+    countActiveItemsOfType(db, `freight:${companyId}`, goodType);
   const consigned = Number(
     queryRow(
       db,
@@ -203,13 +205,16 @@ function restockInputs(
   recipe: Recipe,
   managementLevel: number,
   tick: number,
+  committed = false,
 ): void {
   if (!recipe.inputGood) return;
   const workers = countActiveEmploymentsForSlot(db, slot.id);
   if (workers === 0) return;
-  const onHand = countActiveItemsOfType(db, company.id, recipe.inputGood);
+  const onHand =
+    countActiveItemsOfType(db, company.id, recipe.inputGood) +
+    (committed ? committedInputs(db, company.id, recipe.inputGood) : 0);
   const dayOfWork = Math.ceil(inputPerShift(recipe) * workers);
-  const habitualRestockDay = (tick / MINUTES_PER_DAY) % restockIntervalDays(managementLevel) === 0;
+  const habitualRestockDay = Math.floor(tick / MINUTES_PER_DAY) % restockIntervalDays(managementLevel) === 0;
   if (!habitualRestockDay && onHand >= dayOfWork) return;
 
   const capacityDailyInput = (inputPerShift(recipe) * workers * WORKDAYS_PER_WEEK) / 7;
@@ -575,6 +580,14 @@ export function shutDownCompany(
     data?: Record<string, unknown>;
   },
 ): void {
+  bus.emit({
+    tick,
+    scope: 'business',
+    actorId: company.id,
+    type: 'company.closing',
+    message: '',
+    detail: true,
+  });
   const slots = listJobSlotsForCompany(db, company.id);
   terminateAllEmploymentsForCompany(db, bus, company.id, tick, params.message);
   liquidateCompany(db, bus, company, slots, tick);
@@ -793,7 +806,7 @@ function recordMilestones(
 // weighted. True standing B2B contracts with freight (§9.7 — needs the
 // transport module, which doesn't exist yet) are still not built — a named
 // gap, not a silent one; see DECISIONS.md.
-export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: number): void {
+export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: number, scheduled = false): void {
   const day = tick / MINUTES_PER_DAY;
 
   // Two passes. First every business decides and buys — so a mill shopping
@@ -813,10 +826,10 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
     if (!playerManaged && day % 7 === 0 && tryWindDown(db, bus, company, managementLevel, tick)) continue;
 
     if (!playerManaged) considerOwnerInjection(db, bus, company, slots, managementLevel, tick);
-    restockEquipment(db, bus, company, slots, tick);
+    if (!scheduled) restockEquipment(db, bus, company, slots, tick);
     if (!playerManaged) tryUpgrade(db, bus, company, slots, managementLevel, tick);
     if (!playerManaged && day % 7 === 0) adjustStaffing(db, bus, company, slots, managementLevel, tick);
-    for (const slot of slots) {
+    for (const slot of scheduled ? [] : slots) {
       const recipe = getRecipeForSkill(slot.skill);
       if (recipe?.inputGood) restockInputs(db, bus, company, slot, recipe, managementLevel, tick);
     }
@@ -824,7 +837,7 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
   }
 
   for (const { company, slots } of operating) {
-    for (const slot of slots) {
+    for (const slot of scheduled ? [] : slots) {
       const recipe = getRecipeForSkill(slot.skill);
       if (!recipe) continue;
       // Whatever no local business bought goes to market the same day — the
@@ -887,4 +900,61 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
       setCompanyInsolvency(db, company.id, null);
     }
   }
+}
+
+// Operational purchases use the existing management/margin/cash rules but run
+// when a timed supply trip returns, independently of financial reviews.
+export function purchaseCompanySupplies(db: Database, bus: EventBus, company: Company, tick: number): void {
+  if (company.closedAtTick !== null) return;
+  const slots = listJobSlotsForCompany(db, company.id);
+  const manager = getCompanyManagerId(company);
+  if (!manager || !isPlayerControlled(db, manager))
+    considerOwnerInjection(db, bus, company, slots, managementLevelFor(db, company), tick);
+  restockEquipment(db, bus, company, slots, tick);
+  for (const slot of slots) {
+    const recipe = getRecipeForSkill(slot.skill);
+    if (recipe?.inputGood)
+      restockInputs(db, bus, company, slot, recipe, managementLevelFor(db, company), tick, true);
+  }
+}
+
+export function companyNeedsSupplies(
+  db: Database,
+  company: Company,
+  tick?: number,
+  habitual = false,
+): boolean {
+  for (const slot of listJobSlotsForCompany(db, company.id)) {
+    if (countActiveEmploymentsForSlot(db, slot.id) === 0) continue;
+    if (slot.toolGoodType && countActiveItemsOfType(db, company.id, slot.toolGoodType) === 0) return true;
+    const recipe = getRecipeForSkill(slot.skill);
+    if (recipe?.inputGood) {
+      const workers = countActiveEmploymentsForSlot(db, slot.id);
+      const interval = restockIntervalDays(managementLevelFor(db, company));
+      const bufferDue = habitual && tick !== undefined && Math.floor(tick / MINUTES_PER_DAY) % interval === 0;
+      const target =
+        inputPerShift(recipe) *
+        workers *
+        (bufferDue ? (WORKDAYS_PER_WEEK / 7) * (interval + INPUT_BUFFER_DAYS) : 1);
+      if (
+        countActiveItemsOfType(db, company.id, recipe.inputGood) +
+          committedInputs(db, company.id, recipe.inputGood) <
+        target
+      )
+        return true;
+    }
+  }
+  return false;
+}
+
+function committedInputs(db: Database, companyId: string, good: string): number {
+  return Number(
+    queryRow(
+      db,
+      `SELECT COUNT(*) FROM items JOIN actions ON items.container_id = 'work-input:' || actions.id
+    JOIN employment ON employment.entity_id = actions.actor_id AND employment.status = 'active'
+    WHERE employment.company_id = ? AND items.type = ? AND items.status = 'active' AND actions.status = 'in_progress'`,
+      [companyId, good],
+    )?.[0] ?? 0,
+  );
 }

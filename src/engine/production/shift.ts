@@ -20,16 +20,18 @@ export function runProductionShift(
     qualityTier: number;
     tick: number;
     scope: EventScope;
+    inputContainerId?: string;
   },
 ): number {
   const { recipe, companyId } = params;
+  const inputContainerId = params.inputContainerId ?? companyId;
   const laborOutput = params.succeeded ? recipe.outputPerShiftSuccess : recipe.outputPerShiftFailure;
-  const available = recipe.inputGood ? countActiveItemsOfType(db, companyId, recipe.inputGood) : 0;
+  const available = recipe.inputGood ? countActiveItemsOfType(db, inputContainerId, recipe.inputGood) : 0;
   const { consume, produce } = planShift(recipe, laborOutput, available);
   if (produce <= 0) return 0;
 
   if (recipe.inputGood && consume > 0) {
-    consumeActiveItems(db, bus, companyId, recipe.inputGood, consume, params.tick, {
+    consumeActiveItems(db, bus, inputContainerId, recipe.inputGood, consume, params.tick, {
       actorId: params.workerId,
       note: `${recipe.inputGood} used at ${params.companyName}.`,
       scope: params.scope,

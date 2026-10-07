@@ -84,7 +84,6 @@ import {
   seedListing,
   type MarketListing,
 } from './market/market';
-import { applyMerchantTrade } from './market/merchant';
 import { marketTradeType, registerPlayerMarketAction, type MarketTradeRequest } from './market/playerTrade';
 import { driftMarketPrices } from './market/pricing';
 import {
@@ -98,12 +97,11 @@ import {
 } from './needs/needs';
 import { getRoutinePreferences, setRoutinePreferences, type RoutinePreferences } from './player/preferences';
 import { getPlayerProfile, getPlayerHome } from './player/profile';
+import { SettlementActivities } from './population/activities';
 import {
   applyHouseholdDailyCadence,
   applyHouseholdMigrationWeeklyCadence,
-  applyNpcJobSeekingWeeklyCadence,
   applyParishTitheWeeklyCadence,
-  applyNpcLaborDailyCadence,
   applyWorkplaceExperienceWeeklyCadence,
 } from './population/cadence';
 import { applyEntrepreneurshipCadence, ENTREPRENEURSHIP_INTERVAL_DAYS } from './population/entrepreneurship';
@@ -179,6 +177,7 @@ export class Engine {
   readonly actions = new ActionRegistry();
   private rng: SeededRng;
   private detachLogger: () => void;
+  private settlementActivities: SettlementActivities;
   // Cached, not re-queried per call — see getStartSeasonIndex()'s comment.
   private startSeasonIndex: number | null = null;
 
@@ -197,6 +196,7 @@ export class Engine {
     const savedState = typeof row?.[0] === 'number' ? row[0] : null;
     this.rng = createRng(savedState ?? hashSeed(seed));
     this.detachLogger = attachLogger(db, this.bus);
+    this.settlementActivities = new SettlementActivities(this);
     registerCollapseRecoveryAction(this.actions);
     for (const action of queryRows(
       db,
@@ -440,57 +440,44 @@ export class Engine {
   private stepOneTick(): void {
     const nextTick = this.tick + 1;
     this.db.run('UPDATE world_meta SET tick = ? WHERE id = 1', [nextTick]);
+    if (nextTick === 1 || nextTick % 60 === 0) {
+      this.timed('hourly.activityMembership', () => this.settlementActivities.reconcile(nextTick));
+    }
     this.timed('tick.needs', () => this.applyNeedsCadence(nextTick));
     this.timed('tick.actions', () => this.processActiveActions(nextTick));
     if (this.routinePolicy && nextTick % ROUTINE_INTERVAL_TICKS === 0) {
       this.timed('tick.routine', () => this.applyRoutines(nextTick));
     }
+    if (nextTick % 360 === 0) this.timed('sixHourly.prices', () => driftMarketPrices(this.db, 4));
 
-    // §4.2's staggered cadence: daily (household budgets) → weekly
-    // (hiring/wages) → nightly (conservation audit). NPCs' entire economic
-    // footprint (feeding, wages, skill gain, production) lives in these
-    // coarse per-household/per-employment passes rather than the player's
-    // per-tick action-queue machinery — see population/cadence.ts's header
-    // comment for why that split is load-bearing, not cosmetic.
+    // Operational work, wages, errands and meals resolve through due actions.
+    // These boundaries retain accounting and decisions whose information
+    // windows span days or weeks; see SETTLEMENT_ACTIVITIES.md for the audit.
     if (nextTick % MINUTES_PER_DAY === 0) {
       const exposedToCold = deriveCalendar(nextTick, this.getStartSeasonIndex()).season === 'winter';
 
-      // The day's economy, in the order goods actually move (2026-10-06
-      // balancing pass): workers' shifts produce (workdays only) →
-      // companies restock inputs, put the day's output on the market and
-      // (weekly) pay owners → the merchant imports into shortages and buys
-      // up gluts → prices drift toward the new stock levels → households
-      // eat and heat from what's on the shelves → perishables spoil.
-      this.timed('daily.labor', () => applyNpcLaborDailyCadence(this.db, this.bus, nextTick, this.rng));
-      this.timed('daily.companies', () => applyCompanyDailyCadence(this.db, this.bus, nextTick));
-      this.timed('daily.merchant', () => applyMerchantTrade(this.db, this.bus, nextTick));
+      // Retained strategic reviews do not repeat intraday purchases, production,
+      // deliveries, meals or rest. Record the day's market before spoilage.
+      this.timed('daily.companies', () => applyCompanyDailyCadence(this.db, this.bus, nextTick, true));
       this.timed('daily.prices', () => {
-        driftMarketPrices(this.db);
         recordMarketDay(this.db, nextTick);
       });
       this.timed('daily.households', () =>
-        applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold),
+        applyHouseholdDailyCadence(this.db, this.bus, nextTick, exposedToCold, true),
       );
       this.timed('daily.spoilage', () => applySpoilage(this.db, this.bus, nextTick));
 
       if ((nextTick / MINUTES_PER_DAY) % 7 === 0) {
-        // People with savings weigh starting a business of their own
-        // (population/entrepreneurship.ts) — before job-seeking, so a new
-        // business's openings are there for this week's hiring pass.
+        // Capital commitments use a fortnight's market evidence. Founding
+        // wakes the labor office, which offers visits to eligible applicants.
         if ((nextTick / MINUTES_PER_DAY) % ENTREPRENEURSHIP_INTERVAL_DAYS === 0) {
           this.timed('fortnightly.entrepreneurship', () =>
             applyEntrepreneurshipCadence(this.db, this.bus, nextTick, this.rng),
           );
         }
         this.timed('weekly.experience', () => applyWorkplaceExperienceWeeklyCadence(this.db, nextTick));
-        // §Stage 5: fills newly-opened job slots (company growth) and
-        // realizes §10's "another member works" adaptation rung.
-        this.timed('weekly.jobSeeking', () =>
-          applyNpcJobSeekingWeeklyCadence(this.db, this.bus, nextTick, this.rng),
-        );
-        // §11.4 Migration — after job-seeking so a household about to
-        // qualify gets this week's hiring pass first (migrate is the
-        // ladder's last rung, after "another member works").
+        // Migration remains the last hardship rung, after the day's real
+        // provisioning and repeated opportunities to seek work.
         this.timed('weekly.migration', () =>
           applyHouseholdMigrationWeeklyCadence(this.db, this.bus, nextTick, this.rng),
         );
@@ -505,16 +492,19 @@ export class Engine {
   // actionQueue.ts's listActorsWithDueActions.
   private processActiveActions(currentTick: number): void {
     for (const actorId of listActorsWithDueActions(this.db, currentTick)) {
-      processActorActions(this.db, this.bus, this.actions, this.rng, actorId, currentTick);
+      if (processActorActions(this.db, this.bus, this.actions, this.rng, actorId, currentTick)) {
+        this.settlementActivities.plan(actorId, currentTick, true);
+        // Start the chosen activity in the completion tick.
+        processActorActions(this.db, this.bus, this.actions, this.rng, actorId, currentTick);
+      }
     }
   }
 
   // Needs decay before actions resolve each tick, so an action that
   // completes this same tick sees the tick's own decay applied first.
   // Selects foreground simulation explicitly — confirmed empirically that this
-  // per-tick, per-entity path cannot scale past a handful of entities (see
-  // population/cadence.ts's header comment); NPCs' needs are handled by the
-  // daily household cadence instead.
+  // per-tick, per-entity path cannot scale past a handful of entities.
+  // Background needs change at scheduled meals/rest and daily accounting.
   private applyNeedsCadence(currentTick: number): void {
     const season = deriveCalendar(currentTick, this.getStartSeasonIndex()).season;
     const rows = queryRows(
@@ -630,7 +620,8 @@ export class Engine {
   }
 
   interruptAction(actorId: string): void {
-    interruptCurrentAction(this.db, this.bus, actorId, this.tick);
+    interruptCurrentAction(this.db, this.bus, actorId, this.tick, this.actions);
+    this.settlementActivities.plan(actorId, this.tick);
   }
 
   createSite(site: Site): void {
@@ -956,9 +947,7 @@ export class Engine {
     return getEntity(this.db, id);
   }
 
-  // §14.2 location panels' "presence roster" (§Stage 4's hourly version —
-  // see population/presence.ts's header comment for why this is a
-  // deterministic lookup, not simulated movement).
+  // Presence follows persisted activity locations and actual arrival ticks.
   listPresentEntities(siteId: string): PresentEntity[] {
     const hourOfDay = Math.floor(this.calendar.minuteOfDay / 60);
     return listPresentEntities(this.db, siteId, hourOfDay);
@@ -1006,6 +995,7 @@ export class Engine {
   }
 
   dispose(): void {
+    this.settlementActivities.dispose();
     this.detachLogger();
     this.db.close();
   }

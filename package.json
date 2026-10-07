@@ -20,6 +20,7 @@
     "validate": "npm run typecheck && npm run lint && npm run format:check && npm run test && npm run test:native && npm run build",
     "sim:headless": "tsx src/engine/headless-runner.ts",
     "sim:perf": "tsx src/engine/perf/longRun.ts",
+    "sim:activities": "node scripts/electron-node.mjs node_modules/tsx/dist/cli.mjs src/engine/perf/activityScale.ts",
     "test:electron": "node scripts/electron-smoke.mjs",
     "test:packaged": "node scripts/electron-smoke.mjs --packaged",
     "validate:desktop": "npm run validate && npm run test:electron && npm run package && npm run test:packaged",

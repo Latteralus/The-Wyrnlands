@@ -1,59 +1,80 @@
-import { getCompany } from '../companies/companies';
-import { getEntityName } from '../entities';
-import { getActiveEmployment, getJobSlot } from '../jobs/jobs';
-import { getHousehold, getHouseholdIdForMember, listAllHouseholdMemberIds } from './households';
+import { queryRow, queryRows } from '../db/sqlite';
 import type { Database } from '../db/sqlite';
 
 export interface PresentEntity {
   entityId: string;
   name: string;
+  activity: string | null;
+  startedAtTick: number | null;
+  endsAtTick: number | null;
 }
 
-// A cheap, stable per-entity "coin flip" — no seeded-RNG stream involvement.
-// §4.2's determinism guarantee is about simulation *state*; this is a
-// cosmetic, side-effect-free lookup that must just be stable across repeated
-// calls within the same hour, not part of any reproducibility contract.
-function stableCoinFlip(entityId: string): boolean {
-  let h = 0;
-  for (let i = 0; i < entityId.length; i++) h = (h * 31 + entityId.charCodeAt(i)) | 0;
-  return (h & 1) === 0;
+export interface ActivitySnapshot {
+  label: string;
+  siteId: string | null;
+  destinationSiteId: string | null;
+  startedAtTick: number;
+  endsAtTick: number;
 }
 
-// §5.5/§Stage 4 "hourly presence rosters": a deterministic lookup of where
-// an NPC plausibly is at a given hour, not a physically simulated schedule.
-// This is the "regional LOD" half of Stage 4 — NPCs don't run the player's
-// per-tick action-queue machinery (see cadence.ts's header comment for why
-// that doesn't scale past a handful of entities), so presence is derived on
-// demand from employment + household rather than tracked as literal
-// moment-to-moment state.
-function scheduledSiteId(db: Database, entityId: string, hourOfDay: number): string | null {
-  const householdId = getHouseholdIdForMember(db, entityId);
-  const household = householdId ? getHousehold(db, householdId) : null;
-  const homeSiteId = household?.homeSiteId ?? null;
-
-  if (hourOfDay >= 6 && hourOfDay < 18) {
-    const employment = getActiveEmployment(db, entityId);
-    const jobSlot = employment ? getJobSlot(db, employment.jobSlotId) : null;
-    const company = jobSlot ? getCompany(db, jobSlot.companyId) : null;
-    return company?.siteId ?? homeSiteId;
-  }
-
-  if (hourOfDay >= 18 && hourOfDay < 21) {
-    return stableCoinFlip(entityId) ? 'tavern' : homeSiteId;
-  }
-
-  return homeSiteId;
+function activityLabel(type: string | null, payload: Record<string, unknown> | null): string | null {
+  if (!type) return null;
+  if (typeof payload?.label === 'string') return payload.label;
+  const labels: Record<string, string> = {
+    'settlement:rest': 'Sleeping at home',
+    'settlement:eating': 'Eating at home',
+    'settlement:water': 'Fetching water',
+    'settlement:shopping': 'Shopping',
+    'settlement:unload': 'Putting supplies away',
+    'settlement:visit': 'Visiting the tavern',
+    'settlement:travel': 'Travelling',
+    'settlement:seek_work': 'Seeking work',
+  };
+  return labels[type] ?? type.replaceAll('_', ' ');
 }
 
-// §14.2 location panels' "presence roster." Cheap enough to call on render
-// (O(NPC count), ~40 at Stage 4 scale) — not something the per-tick cadence
-// touches.
-export function listPresentEntities(db: Database, siteId: string, hourOfDay: number): PresentEntity[] {
-  const present: PresentEntity[] = [];
-  for (const entityId of listAllHouseholdMemberIds(db)) {
-    if (scheduledSiteId(db, entityId, hourOfDay) === siteId) {
-      present.push({ entityId, name: getEntityName(db, entityId) });
-    }
-  }
-  return present;
+export function getActivitySnapshot(db: Database, actorId: string): ActivitySnapshot | null {
+  const row = queryRow(
+    db,
+    `SELECT actions.type, actions.payload, entities.current_site_id,
+      actions.started_at_tick, actions.ends_at_tick FROM actions
+    JOIN entities ON entities.id = actions.actor_id
+    WHERE actor_id = ? AND status = 'in_progress' LIMIT 1`,
+    [actorId],
+  );
+  if (!row) return null;
+  const payload = typeof row[1] === 'string' ? (JSON.parse(row[1]) as Record<string, unknown>) : null;
+  return {
+    label: activityLabel(String(row[0]), payload) ?? '',
+    siteId: typeof row[2] === 'string' ? row[2] : null,
+    destinationSiteId: typeof payload?.destination === 'string' ? payload.destination : null,
+    startedAtTick: Number(row[3]),
+    endsAtTick: Number(row[4]),
+  };
+}
+
+// Presence reads recorded location and the current action. Travellers have no
+// site until arrival, and departed households have no presence.
+export function listPresentEntities(db: Database, siteId: string, _hourOfDay: number): PresentEntity[] {
+  return queryRows(
+    db,
+    `SELECT entities.id, entities.name, actions.type, actions.payload,
+      actions.started_at_tick, actions.ends_at_tick
+    FROM entities JOIN household_members ON household_members.entity_id = entities.id
+    JOIN households ON households.id = household_members.household_id
+    LEFT JOIN actions ON actions.actor_id = entities.id AND actions.status = 'in_progress'
+    WHERE entities.current_site_id = ? AND households.departed_at_tick IS NULL
+    ORDER BY entities.id`,
+    [siteId],
+  ).map((row) => {
+    const payload = typeof row[3] === 'string' ? (JSON.parse(row[3]) as Record<string, unknown>) : null;
+    const type = typeof row[2] === 'string' ? row[2] : null;
+    return {
+      entityId: String(row[0]),
+      name: String(row[1]),
+      activity: activityLabel(type, payload),
+      startedAtTick: row[4] === null ? null : Number(row[4]),
+      endsAtTick: row[5] === null ? null : Number(row[5]),
+    };
+  });
 }

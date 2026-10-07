@@ -1,3 +1,4 @@
+import { queryRow } from '../db/sqlite';
 import { getGoodDefinition } from '../goods/catalog';
 import { listAllMarketListings } from './market';
 import { referenceStockFor } from './merchant';
@@ -33,21 +34,23 @@ export function computeTargetPrice(
   return Math.max(MIN_PRICE, Math.round(basePrice * scarcity));
 }
 
-// §4.2's cadence table places "price drift" hourly; this engine's cadence
-// granularity below a day is per-tick only (no hourly hook exists anywhere
-// yet), so this runs once per day instead — smoothed pricing that moves
-// daily rather than hourly, a deliberate coarsening flagged like every
-// other cadence simplification in this codebase (population/cadence.ts's
-// header comment is the precedent). history.ts records the price series
-// immediately after this drift, at the existing daily cadence.
-export function driftMarketPrices(db: Database): void {
+// The active settlement reviews prices six-hourly, with fractional carry
+// preserving the original daily adjustment budget. The default daily mode
+// remains available to aggregate economy experiments. History stays daily.
+export function driftMarketPrices(db: Database, reviewsPerDay = 1): void {
   for (const listing of listAllMarketListings(db)) {
     const basePrice = getGoodDefinition(listing.goodType).basePrice;
     // The catalog's per-good reference stock (goods/catalog.ts) when it has
     // one; the listing's own seeded value otherwise.
     const target = computeTargetPrice(basePrice, listing.quantity, referenceStockFor(listing));
     const gap = target - listing.price;
-    if (gap === 0) continue;
+    if (gap === 0) {
+      if (reviewsPerDay > 1)
+        db.run('UPDATE market_listings SET price_adjustment = 0 WHERE id = ? AND price_adjustment != 0', [
+          listing.id,
+        ]);
+      continue;
+    }
 
     // Prices here are small integers (most goods are 1-25 coin), so a plain
     // "10% of the gap, rounded" can round to zero and leave the price stuck
@@ -57,6 +60,17 @@ export function driftMarketPrices(db: Database): void {
     let step = Math.round(gap * DRIFT_FRACTION);
     if (step === 0) step = Math.sign(gap);
     if (Math.abs(step) > Math.abs(gap)) step = gap;
+
+    if (reviewsPerDay > 1) {
+      const carry = Number(
+        queryRow(db, 'SELECT price_adjustment FROM market_listings WHERE id = ?', [listing.id])?.[0] ?? 0,
+      );
+      // Fractional carry preserves the old daily minimum-one-coin movement.
+      // Four reviews must not become four forced one-coin jumps per day.
+      const adjustment = carry + step / reviewsPerDay;
+      step = Math.trunc(adjustment);
+      db.run('UPDATE market_listings SET price_adjustment = ? WHERE id = ?', [adjustment - step, listing.id]);
+    }
 
     const next = Math.max(MIN_PRICE, listing.price + step);
     if (next !== listing.price) {

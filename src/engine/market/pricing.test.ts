@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createDatabase } from '../db/sqlite';
+import { createDatabase, queryRow } from '../db/sqlite';
 import { loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { computeTargetPrice, driftMarketPrices } from './pricing';
@@ -28,6 +28,22 @@ describe('computeTargetPrice', () => {
 });
 
 describe('driftMarketPrices', () => {
+  it('carries fractional intraday changes across saves without multiplying daily price movement', async () => {
+    const SQL = await loadSqlJs();
+    const e = Engine.bootstrap(createDatabase(SQL), { seed: 'price-carry' });
+    e.createSite({ id: 'market', name: 'Market', kind: 'market', x: 0, y: 0 });
+    e.seedMarketListing('market', 'bread', 10, 80); // target 12, daily step 1
+    driftMarketPrices(e.db, 4);
+    driftMarketPrices(e.db, 4);
+    expect(e.getMarketListing('market', 'bread')?.price).toBe(10);
+    expect(queryRow(e.db, 'SELECT price_adjustment FROM market_listings')?.[0]).toBe(0.5);
+    const loaded = Engine.bootstrap(createDatabase(SQL, e.export()), { seed: 'price-carry' });
+    driftMarketPrices(loaded.db, 4);
+    driftMarketPrices(loaded.db, 4);
+    expect(loaded.getMarketListing('market', 'bread')?.price).toBe(11);
+    loaded.dispose();
+    e.dispose();
+  });
   it('moves a listing price toward its target by a fraction of the gap, not all at once', async () => {
     const SQL = await loadSqlJs();
     const db = createDatabase(SQL);

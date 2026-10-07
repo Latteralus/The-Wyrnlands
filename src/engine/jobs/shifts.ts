@@ -1,8 +1,10 @@
 import { recordLedgerEntry } from '../companies/companies';
 import { wearCompanyTool } from '../companies/tools';
-import { findFirstActiveItem } from '../inventory/items';
+import { getEntityName } from '../entities';
+import { findFirstActiveItem, listActiveItemsInContainer, transferItem } from '../inventory/items';
 import { getBalance, transferCoin } from '../inventory/wallet';
-import { getRecipeForSkill } from '../production/recipes';
+import { getHouseholdIdForMember } from '../population/households';
+import { getRecipeForSkill, inputPerShift } from '../production/recipes';
 import { runProductionShift } from '../production/shift';
 import { addXp, getLevel, getSuccessChance } from '../skills/skills';
 import { getActiveEmploymentForSlot, getJobSlot } from './jobs';
@@ -26,11 +28,53 @@ export const SHIFT_XP = 40;
 // not something Stage 5 introduced).
 export function createWorkShiftActionDefinition(
   jobSlotId: string,
-  config: { durationTicks: number },
+  config: { durationTicks: number; scheduledNpc?: boolean; type?: string },
 ): ActionDefinition {
+  const release = (ctx: Parameters<NonNullable<ActionDefinition['applyOutcome']>>[0]) => {
+    const slot = getJobSlot(ctx.db, jobSlotId);
+    if (!slot || !ctx.action) return;
+    for (const item of listActiveItemsInContainer(ctx.db, `work-input:${ctx.action.id}`)) {
+      transferItem(ctx.db, ctx.bus, item.id, slot.companyId, ctx.tick, {
+        scope: 'business',
+        note: 'Unused work materials returned.',
+      });
+    }
+  };
   return {
-    type: `work_shift_${jobSlotId}`,
+    type: config.type ?? `work_shift_${jobSlotId}`,
     durationTicks: config.durationTicks,
+    onStart: (ctx) => {
+      const slot = getJobSlot(ctx.db, jobSlotId);
+      if (slot)
+        ctx.db.run(
+          'UPDATE entities SET current_site_id = (SELECT site_id FROM companies WHERE id = ?) WHERE id = ?',
+          [slot.companyId, ctx.actorId],
+        );
+    },
+    ...(config.scheduledNpc
+      ? ({
+          onStart: (ctx) => {
+            const slot = getJobSlot(ctx.db, jobSlotId);
+            if (slot)
+              ctx.db.run(
+                'UPDATE entities SET current_site_id = (SELECT site_id FROM companies WHERE id = ?) WHERE id = ?',
+                [slot.companyId, ctx.actorId],
+              );
+            const recipe = slot ? getRecipeForSkill(slot.skill) : null;
+            if (!slot || !recipe?.inputGood || !ctx.action) return;
+            const items = listActiveItemsInContainer(ctx.db, slot.companyId)
+              .filter((i) => i.type === recipe.inputGood)
+              .slice(0, inputPerShift(recipe));
+            for (const item of items)
+              transferItem(ctx.db, ctx.bus, item.id, `work-input:${ctx.action.id}`, ctx.tick, {
+                actorId: ctx.actorId,
+                scope: 'business',
+                note: 'Materials committed to a production run.',
+              });
+          },
+          onInterrupt: release,
+        } satisfies Partial<ActionDefinition>)
+      : {}),
     startMessage: (ctx) => {
       const jobSlot = getJobSlot(ctx.db, jobSlotId);
       return jobSlot
@@ -72,16 +116,22 @@ export function createWorkShiftActionDefinition(
           };
     },
     applyOutcome: (ctx, outcome) => {
-      if (outcome.data?.reason === 'no_tool') return; // no shift happened — nothing to apply
+      if (outcome.data?.reason === 'no_tool') {
+        release(ctx);
+        return;
+      }
 
       const employment = getActiveEmploymentForSlot(ctx.db, ctx.actorId, jobSlotId);
-      if (!employment) return; // resolve() already failed for this reason — nothing to apply
+      if (!employment) {
+        release(ctx);
+        return;
+      }
       const jobSlot = getJobSlot(ctx.db, jobSlotId);
       if (!jobSlot) return;
 
       // §13.2: "each labor-tick grants XP" regardless of the attempt's
       // outcome (a failed skill check still teaches something).
-      addXp(ctx.db, ctx.actorId, jobSlot.skill, SHIFT_XP);
+      if (!config.scheduledNpc) addXp(ctx.db, ctx.actorId, jobSlot.skill, SHIFT_XP);
       if (jobSlot.toolGoodType) {
         wearCompanyTool(
           ctx.db,
@@ -110,18 +160,22 @@ export function createWorkShiftActionDefinition(
           ctx.db,
           ctx.bus,
           jobSlot.companyId,
-          ctx.actorId,
+          config.scheduledNpc ? (getHouseholdIdForMember(ctx.db, ctx.actorId) ?? ctx.actorId) : ctx.actorId,
           affordableWage,
           ctx.tick,
           `${jobSlot.companyName} pays you ${affordableWage} coin for your shift.`,
+          config.scheduledNpc ? 'business' : 'personal',
         );
         recordLedgerEntry(ctx.db, jobSlot.companyId, ctx.tick, 'wage', affordableWage, 'Shift wage.');
       }
 
       const recipe = getRecipeForSkill(jobSlot.skill);
-      if (!recipe) return; // a job slot for a skill with no production recipe (none exist today, but not assumed impossible)
+      if (!recipe) {
+        release(ctx);
+        return;
+      }
 
-      runProductionShift(ctx.db, ctx.bus, {
+      const made = runProductionShift(ctx.db, ctx.bus, {
         companyId: jobSlot.companyId,
         companyName: jobSlot.companyName,
         workerId: ctx.actorId,
@@ -129,8 +183,21 @@ export function createWorkShiftActionDefinition(
         succeeded: outcome.success,
         qualityTier: 1 + Math.floor(getLevel(ctx.db, ctx.actorId, jobSlot.skill) / 2),
         tick: ctx.tick,
-        scope: 'personal',
+        scope: config.scheduledNpc ? 'business' : 'personal',
+        ...(config.scheduledNpc && ctx.action ? { inputContainerId: `work-input:${ctx.action.id}` } : {}),
       });
+      if (config.scheduledNpc) {
+        addXp(ctx.db, ctx.actorId, jobSlot.skill, SHIFT_XP);
+        release(ctx);
+        ctx.bus.emit({
+          tick: ctx.tick,
+          scope: 'business',
+          actorId: jobSlot.companyId,
+          type: 'business.workday',
+          message: `1 hand works a shift (${getEntityName(ctx.db, ctx.actorId)}), turning out ${made} ${recipe.outputGood}; ${affordableWage} coin paid.`,
+          data: { hands: 1, wages: affordableWage, made: { [recipe.outputGood]: made } },
+        });
+      }
     },
   };
 }

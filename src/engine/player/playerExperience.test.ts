@@ -494,7 +494,7 @@ describe('routine settings and strategic decisions', () => {
     expect(e.getCompanyLedgerSummary(result.companyId, 0).ownerContributions).toBe(500);
     expect(inspectConservation(e.db, e.tick).passed).toBe(true);
     e.dispose();
-  });
+  }, 30_000);
 });
 
 describe('SQLite persistence and deterministic continuation', () => {

@@ -85,6 +85,10 @@ export function getRecipeForSkill(skill: string): Recipe | null {
   return RECIPES[skill] ?? null;
 }
 
+export function listRecipes(): Recipe[] {
+  return Object.values(RECIPES);
+}
+
 // How much one shift actually produces and consumes, given the labor's
 // output ceiling and the input on hand. Whole batches only.
 export function planShift(
