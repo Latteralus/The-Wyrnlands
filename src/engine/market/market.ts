@@ -1,4 +1,4 @@
-import { recordLedgerEntry } from '../companies/companies';
+import { getCompany, recordLedgerEntry } from '../companies/companies';
 import { queryRow, queryRows } from '../db/sqlite';
 import { getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
@@ -6,6 +6,7 @@ import { getConservationCounters } from '../inventory/counters';
 import { findFirstActiveItem, produceItem, transferItem } from '../inventory/items';
 import { faucetCoin, getBalance, sinkCoin, transferCoin } from '../inventory/wallet';
 import { withOptional } from '../optional';
+import { recordMarketActivity } from './activity';
 import { recordMarketFlow } from './history';
 import type { ActionDefinition } from '../actions/types';
 import type { EventBus, EventScope } from '../eventBus';
@@ -186,6 +187,16 @@ export function createSellActionDefinition(siteId: string, goodType: string): Ac
         seedListing(ctx.db, siteId, goodType, getGoodDefinition(goodType).basePrice, 1);
       }
       faucetCoin(ctx.db, ctx.bus, ctx.actorId, price, ctx.tick, `Paid ${price} coin for your ${goodType}.`);
+      recordMarketActivity(ctx.db, {
+        siteId,
+        tick: ctx.tick,
+        kind: 'sold_to_stall',
+        goodType,
+        quantity: 1,
+        unitPrice: price,
+        sellerId: ctx.actorId,
+        buyerId: null,
+      });
     },
   };
 }
@@ -223,6 +234,16 @@ export function sellSurplusToMarket(
     sold++;
   }
   if (sold === 0) return 0;
+  recordMarketActivity(db, {
+    siteId,
+    tick,
+    kind: 'listed',
+    goodType,
+    quantity: sold,
+    unitPrice: getListing(db, siteId, goodType)?.price ?? unitPrice,
+    sellerId: companyId,
+    buyerId: null,
+  });
   bus.emit({
     tick,
     scope: 'business',
@@ -353,6 +374,8 @@ export function buyFromMarket(
   const units = Math.min(quantity, listing?.quantity ?? 0);
   if (!listing || units <= 0) return { itemIds: [], totalCost: 0, unitPrice: 0, sources: [] };
   const price = listing.price;
+  if (getBalance(db, buyerId) < units * price)
+    throw new Error(`Insufficient balance for ${units} ${goodType}.`);
   const scope = options.scope ?? 'personal';
   const note = options.note ?? `Bought ${goodType} at the market.`;
 
@@ -377,21 +400,25 @@ export function buyFromMarket(
   }
   for (const [consignorId, count] of owedUnits) {
     transferCoin(db, bus, buyerId, consignorId, count * price, tick, note, scope);
-    recordLedgerEntry(
-      db,
-      consignorId,
-      tick,
-      'revenue',
-      count * price,
-      `Sold ${count} ${goodType} at the market.`,
-      count,
-    );
+    const isCompany = getCompany(db, consignorId) !== null;
+    if (isCompany)
+      recordLedgerEntry(
+        db,
+        consignorId,
+        tick,
+        'revenue',
+        count * price,
+        `Sold ${count} ${goodType} at the market.`,
+        count,
+      );
     bus.emit({
       tick,
-      scope: 'business',
+      scope: isCompany ? 'business' : 'personal',
       actorId: consignorId,
-      type: 'business.sold',
-      message: `Sells ${count} ${goodType} to ${narrativeName(db, buyerId)} at the market stall: ${price} coin each, ${count * price} coin in all.`,
+      type: isCompany ? 'business.sold' : 'market.sale',
+      message: isCompany
+        ? `Sells ${count} ${goodType} to ${narrativeName(db, buyerId)} at the market stall: ${price} coin each, ${count * price} coin in all.`
+        : `Your ${count} ${goodType} sells to ${narrativeName(db, buyerId)} for ${count * price} coin (${price} each).`,
       data: { buyerId, goodType, units: count, price },
     });
   }
@@ -429,6 +456,17 @@ export function buyFromMarket(
   }
   const sources: MarketPurchase['sources'] = [...owedUnits].map(([sellerId, n]) => ({ sellerId, units: n }));
   if (merchantUnits > 0) sources.push({ sellerId: null, units: merchantUnits });
+  for (const source of sources)
+    recordMarketActivity(db, {
+      siteId,
+      tick,
+      kind: 'purchase',
+      goodType,
+      quantity: source.units,
+      unitPrice: price,
+      sellerId: source.sellerId,
+      buyerId,
+    });
   return { itemIds, totalCost: units * price, unitPrice: price, sources };
 }
 

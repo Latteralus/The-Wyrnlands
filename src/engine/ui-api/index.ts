@@ -5,7 +5,17 @@ import type { Entity } from '../entities';
 import type { EngineEvent, EventScope } from '../eventBus';
 import type { WornGear } from '../gear/gear';
 import type { ApplyResult, Employment, JobSlot } from '../jobs/jobs';
+import type { MarketActivity, MarketActivityFilter, MarketActivityKind } from '../market/activity';
+import type {
+  MarketOverview,
+  MarketGood,
+  MarketSeller,
+  MarketPackLine,
+  PersonalMarketListing,
+  MarketHistoryPoint,
+} from '../market/dashboard';
 import type { MarketListing } from '../market/market';
+import type { MarketTradeRequest, MarketTradeKind } from '../market/playerTrade';
 import type { Needs } from '../needs/needs';
 import type { Household } from '../population/households';
 import type { PresentEntity } from '../population/presence';
@@ -26,6 +36,17 @@ import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
 
 export type {
+  MarketActivity,
+  MarketActivityFilter,
+  MarketActivityKind,
+  MarketOverview,
+  MarketGood,
+  MarketSeller,
+  MarketPackLine,
+  PersonalMarketListing,
+  MarketHistoryPoint,
+  MarketTradeRequest,
+  MarketTradeKind,
   BusinessProfile,
   CompanyRole,
   HouseholdMember,
@@ -55,6 +76,7 @@ export type {
   LedgerSummary,
 };
 export { MINUTES_PER_DAY } from '../time/clock';
+export { actionLabel } from '../market/playerTrade';
 
 /**
  * The only surface React is allowed to touch. Screens call this instead of
@@ -77,6 +99,10 @@ export interface UiApi {
   getNeeds(entityId: string): Needs | null;
   getWornGear(entityId: string): WornGear[];
   listMarketListings(siteId: string): MarketListing[];
+  getMarketOverview(siteId: string, actorId: string): MarketOverview;
+  getMarketHistory(siteId: string, goodType: string, windowDays: number): MarketHistoryPoint[];
+  queryMarketActivity(siteId: string, filter?: MarketActivityFilter): MarketActivity[];
+  queueMarketTrade(actorId: string, request: MarketTradeRequest): number;
   listJobOpenings(): JobSlot[];
   getEmployment(entityId: string): Employment | null;
   applyForJob(entityId: string, jobSlotId: string, haggle: boolean): ApplyResult;
@@ -138,6 +164,10 @@ export function createUiApi(engine: Engine): UiApi {
     getNeeds: (entityId) => engine.getNeeds(entityId),
     getWornGear: (entityId) => engine.getWornGear(entityId),
     listMarketListings: (siteId) => engine.listMarketListings(siteId),
+    getMarketOverview: (siteId, actorId) => engine.getMarketOverview(siteId, actorId),
+    getMarketHistory: (siteId, goodType, windowDays) => engine.getMarketHistory(siteId, goodType, windowDays),
+    queryMarketActivity: (siteId, filter) => engine.queryMarketActivity(siteId, filter),
+    queueMarketTrade: (actorId, request) => engine.queueMarketTrade(actorId, request),
     listJobOpenings: () => engine.listJobOpenings(),
     getEmployment: (entityId) => engine.getEmployment(entityId),
     applyForJob: (entityId, jobSlotId, haggle) => engine.applyForJob(entityId, jobSlotId, { haggle }),

@@ -4,6 +4,20 @@ Tracks where the implementation diverges from, or makes a specific choice within
 
 ---
 
+## 2026-10-06 — A market screen over the existing economy
+
+The market location now opens Goods, Activity, and My Listings. Goods come from actual market listings, with seller quantities read from per-item consignments and merchant stock shown separately. Axes and hoes are purchasable. The screen includes quantity controls, pack contents and condition, carrying weight, and 7/28/90-day charts for recorded prices, stock, local trade, imports, and exports.
+
+Prices remain shared per good, and purchases retain the existing oldest-first stock order. Seller rows describe ownership; they do not select a seller or introduce independent asking prices. The existing daily `market_history` and NPC opportunity calculations are unchanged. Charts label prices as recorded daily prices: snapshots happen after company/merchant trade and price drift, before household shopping and spoilage. Local traded volume includes direct business trades. Missing history is left empty.
+
+Migration `0022_market_activity` adds an observational, indexed trade journal, recorded once per seller batch for stall purchases, consignments, direct business trades, imports, exports, withdrawals, and outright sales. It does not backfill old individual transactions or feed NPC decisions. Existing saves keep their daily history.
+
+Player purchases, listings, and withdrawals are five-minute queued actions. Their kind, site, good, and quantity are encoded in the persisted action type; the engine reconstructs pending definitions on reload. Completion rechecks stock, coin, ownership, unworn inventory, and carrying capacity. Personal listings move real items into existing market consignments without upfront payment. Purchases and exports pay personal wallets; company sales retain company ledger entries and their original business logs. Unsold goods can be withdrawn; spoilage follows the existing rules. Worn equipment and free well water cannot be listed. Legacy buy/sell actions and autonomous routines remain available for compatibility.
+
+Verification: new tests cover trading, ownership, partial-payment prevention, queued state changes, spoilage, exports, migration, reload, seller breakdowns, sparse charts, activity paging, and read-only determinism. A 14-day paired simulation produces identical exported databases with or without repeated market queries. The 28-day `market-regression` baseline retains fingerprint `0b9085443b0c6f18` after the market changes, with conservation passing. Headless browser checks cover navigation, purchasing an axe, listing/withdrawal, activity, charts, and mobile layout.
+
+---
+
 ## 2026-10-06 (latest) — Supply chains that work, a player who lives their day, households that keep a larder, logs that read as a story
 
 Four requests from play-testing, plus findings they surfaced.

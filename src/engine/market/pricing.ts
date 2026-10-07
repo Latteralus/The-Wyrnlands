@@ -38,9 +38,8 @@ export function computeTargetPrice(
 // yet), so this runs once per day instead — smoothed pricing that moves
 // daily rather than hourly, a deliberate coarsening flagged like every
 // other cadence simplification in this codebase (population/cadence.ts's
-// header comment is the precedent). No price-history table exists yet
-// either (§14.2's "price history charts" is a later, UI-driven addition) —
-// this only maintains the live price, not a queryable series over time.
+// header comment is the precedent). history.ts records the price series
+// immediately after this drift, at the existing daily cadence.
 export function driftMarketPrices(db: Database): void {
   for (const listing of listAllMarketListings(db)) {
     const basePrice = getGoodDefinition(listing.goodType).basePrice;

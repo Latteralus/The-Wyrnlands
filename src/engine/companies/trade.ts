@@ -2,6 +2,7 @@ import { getGoodDefinition } from '../goods/catalog';
 import { findFirstActiveItem, countActiveItemsOfType, transferItem } from '../inventory/items';
 import { getBalance, transferCoin } from '../inventory/wallet';
 import { listJobOpenings } from '../jobs/jobs';
+import { recordMarketActivity } from '../market/activity';
 import { recordMarketFlow } from '../market/history';
 import { getListing } from '../market/market';
 import { getRecipeForSkill } from '../production/recipes';
@@ -92,6 +93,16 @@ export function buyFromLocalSuppliers(
       units,
     );
     recordMarketFlow(db, MARKET_SITE_ID, goodType, tick, 'sold', units);
+    recordMarketActivity(db, {
+      siteId: MARKET_SITE_ID,
+      tick,
+      kind: 'direct',
+      goodType,
+      quantity: units,
+      unitPrice: price,
+      sellerId: supplierId,
+      buyerId: buyer.id,
+    });
     bus.emit({
       tick,
       scope: 'business',

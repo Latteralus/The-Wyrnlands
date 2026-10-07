@@ -1,4 +1,4 @@
-import type { QueuedAction, UiApi } from '../engine/ui-api';
+import { actionLabel, type QueuedAction, type UiApi } from '../engine/ui-api';
 
 interface ActionQueuePanelProps {
   uiApi: UiApi;
@@ -36,7 +36,7 @@ export function ActionQueuePanel({ uiApi, actorId, currentTick, onInterrupt }: A
         return (
           <div key={action.id} className="action-item">
             <span className="action-item-label">
-              {inProgress ? 'Doing' : 'Queued'}: {action.type.replaceAll('_', ' ')}
+              {inProgress ? 'Doing' : 'Queued'}: {actionLabel(action.type)}
             </span>
             {inProgress && (
               <div className="action-progress-bar">

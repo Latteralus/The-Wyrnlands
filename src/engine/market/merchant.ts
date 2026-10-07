@@ -1,9 +1,10 @@
-import { recordLedgerEntry } from '../companies/companies';
+import { getCompany, recordLedgerEntry } from '../companies/companies';
 import { queryRows } from '../db/sqlite';
 import { getGoodDefinition } from '../goods/catalog';
 import { destroyItem } from '../inventory/items';
 import { faucetCoin } from '../inventory/wallet';
 import { MINUTES_PER_DAY } from '../time/clock';
+import { recordMarketActivity } from './activity';
 import { recordMarketFlow } from './history';
 import { listAllMarketListings, marketStockContainerId, type MarketListing } from './market';
 import type { EventBus } from '../eventBus';
@@ -69,6 +70,16 @@ export function applyMerchantTrade(db: Database, bus: EventBus, tick: number): v
         listing.id,
       ]);
       recordMarketFlow(db, listing.siteId, listing.goodType, tick, 'imported', batch);
+      recordMarketActivity(db, {
+        siteId: listing.siteId,
+        tick,
+        kind: 'imported',
+        goodType: listing.goodType,
+        quantity: batch,
+        unitPrice: askingPrice,
+        sellerId: null,
+        buyerId: null,
+      });
       bus.emit({
         tick,
         scope: 'business',
@@ -129,6 +140,7 @@ function exportGlut(
   recordMarketFlow(db, listing.siteId, listing.goodType, tick, 'exported', units.length);
   for (const [consignorId, count] of perConsignor) {
     const amount = count * unitPrice;
+    const isCompany = getCompany(db, consignorId) !== null;
     faucetCoin(
       db,
       bus,
@@ -136,16 +148,29 @@ function exportGlut(
       amount,
       tick,
       `A merchant buys ${count} surplus ${listing.goodType} for export at ${unitPrice} coin each.`,
-      'business',
+      isCompany ? 'business' : 'personal',
       'export',
     );
-    recordLedgerEntry(db, consignorId, tick, 'revenue', amount, `Exported ${count} ${listing.goodType}.`);
+    if (isCompany)
+      recordLedgerEntry(db, consignorId, tick, 'revenue', amount, `Exported ${count} ${listing.goodType}.`);
+    recordMarketActivity(db, {
+      siteId: listing.siteId,
+      tick,
+      kind: 'exported',
+      goodType: listing.goodType,
+      quantity: count,
+      unitPrice,
+      sellerId: consignorId,
+      buyerId: null,
+    });
     bus.emit({
       tick,
-      scope: 'business',
+      scope: isCompany ? 'business' : 'personal',
       actorId: consignorId,
-      type: 'business.exported',
-      message: `Sells ${count} surplus ${listing.goodType} to a travelling merchant for export: ${unitPrice} coin each, ${amount} coin in all.`,
+      type: isCompany ? 'business.exported' : 'market.exported',
+      message: isCompany
+        ? `Sells ${count} surplus ${listing.goodType} to a travelling merchant for export: ${unitPrice} coin each, ${amount} coin in all.`
+        : `A travelling merchant buys your ${count} surplus ${listing.goodType} for export: ${amount} coin (${unitPrice} each).`,
       data: { goodType: listing.goodType, units: count, price: unitPrice },
     });
   }

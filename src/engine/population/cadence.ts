@@ -20,6 +20,7 @@ import {
   quitJob,
 } from '../jobs/jobs';
 import { SHIFT_XP, TOOL_WEAR_PER_SHIFT } from '../jobs/shifts';
+import { recordMarketActivity } from '../market/activity';
 import { buyFromMarket, getListing, marketStockContainerId, seedListing } from '../market/market';
 import { clamp, ensureNeeds, getNeeds, type NeedKey } from '../needs/needs';
 import { getRecipeForSkill } from '../production/recipes';
@@ -208,6 +209,16 @@ function evaluateHouseholdBudget(
         seedListing(db, MARKET_SITE_ID, sellable.type, price, 1);
       }
       faucetCoin(db, bus, household.id, price, tick, note, 'settlement', 'sold_to_merchant');
+      recordMarketActivity(db, {
+        siteId: MARKET_SITE_ID,
+        tick,
+        kind: 'sold_to_stall',
+        goodType: sellable.type,
+        quantity: 1,
+        unitPrice: price,
+        sellerId: household.id,
+        buyerId: null,
+      });
       bus.emit({
         tick,
         scope: 'settlement',

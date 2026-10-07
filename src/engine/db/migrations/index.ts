@@ -19,6 +19,7 @@ import { migration_0018_market_consignments } from './0018_market_consignments';
 import { migration_0019_economy_balance } from './0019_economy_balance';
 import { migration_0020_business_founding } from './0020_business_founding';
 import { migration_0021_autonomous_routines } from './0021_autonomous_routines';
+import { migration_0022_market_activity } from './0022_market_activity';
 import type { Migration } from './types';
 
 export type { Migration };
@@ -47,4 +48,5 @@ export const migrations: Migration[] = [
   migration_0019_economy_balance,
   migration_0020_business_founding,
   migration_0021_autonomous_routines,
+  migration_0022_market_activity,
 ];

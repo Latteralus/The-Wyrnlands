@@ -11,6 +11,7 @@ import { BusinessScreen } from './screens/BusinessScreen';
 import { HouseholdScreen } from './screens/HouseholdScreen';
 import { JobsScreen } from './screens/JobsScreen';
 import { LocationScreen } from './screens/LocationScreen';
+import { MarketScreen } from './screens/MarketScreen';
 import { NpcProfileScreen } from './screens/NpcProfileScreen';
 import { SettlementScreen, type SettlementTab } from './screens/SettlementScreen';
 import './App.css';
@@ -101,15 +102,26 @@ function App() {
               onAction={bump}
             />
           ) : view.kind === 'location' && site ? (
-            <LocationScreen
-              uiApi={uiApi}
-              site={site}
-              playerId={PLAYER_ID}
-              onBack={() => setView({ kind: 'settlement' })}
-              onAction={bump}
-              onOpenJobs={() => setView({ kind: 'jobs' })}
-              onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
-            />
+            site.kind === 'market' ? (
+              <MarketScreen
+                uiApi={uiApi}
+                site={site}
+                playerId={PLAYER_ID}
+                onBack={() => setView({ kind: 'settlement' })}
+                onAction={bump}
+                onSelectBusiness={(companyId) => setView({ kind: 'business', companyId })}
+              />
+            ) : (
+              <LocationScreen
+                uiApi={uiApi}
+                site={site}
+                playerId={PLAYER_ID}
+                onBack={() => setView({ kind: 'settlement' })}
+                onAction={bump}
+                onOpenJobs={() => setView({ kind: 'jobs' })}
+                onSelectNpc={(entityId) => setView({ kind: 'npc', entityId })}
+              />
+            )
           ) : view.kind === 'household' ? (
             <HouseholdScreen uiApi={uiApi} householdId={view.householdId} {...profileProps} />
           ) : view.kind === 'npc' ? (

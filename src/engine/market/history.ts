@@ -4,7 +4,7 @@ import { listAllMarketListings } from './market';
 import type { Database } from 'sql.js';
 
 // The market's memory (§8.1 rule 6 "agents act on last-known data"; §14.2
-// price history): per listing per day, the closing price and stock plus how
+// price history): per listing per day, the recorded price and stock plus how
 // many units were sold, imported by the merchant and exported. Anyone
 // judging a market — an NPC weighing a new business today, a market chart
 // later — reads this instead of the live listing alone, so "prices have been
@@ -37,9 +37,9 @@ export function recordMarketFlow(
   );
 }
 
-// Closes the day: every listing's price and stock after the day's trade and
-// price drift (Engine's daily cadence calls this right after
-// driftMarketPrices).
+// Snapshots every listing after company/merchant trade and price drift,
+// before household shopping and spoilage. Preserve this cadence: NPC
+// opportunity decisions already use these observations.
 export function recordMarketDay(db: Database, tick: number): void {
   const day = dayOf(tick);
   for (const listing of listAllMarketListings(db)) {

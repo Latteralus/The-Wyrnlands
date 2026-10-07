@@ -30,6 +30,7 @@ describe('applyMigrations', () => {
       '0019_economy_balance',
       '0020_business_founding',
       '0021_autonomous_routines',
+      '0022_market_activity',
     ]);
     expect(applyMigrations(db)).toEqual([]);
 
@@ -53,6 +54,7 @@ describe('applyMigrations', () => {
         'items',
         'job_slots',
         'market_consignments',
+        'market_activity',
         'market_history',
         'market_listings',
         'needs',

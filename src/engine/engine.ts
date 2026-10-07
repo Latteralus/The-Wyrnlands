@@ -57,6 +57,8 @@ import {
 } from './jobs/jobs';
 import { createWorkShiftActionDefinition } from './jobs/shifts';
 import { attachLogger, queryActorLog, queryLog } from './logs/logger';
+import { queryMarketActivity, type MarketActivityFilter } from './market/activity';
+import { getMarketHistory, getMarketOverview } from './market/dashboard';
 import { recordMarketDay } from './market/history';
 import {
   decrementStock,
@@ -66,6 +68,7 @@ import {
   type MarketListing,
 } from './market/market';
 import { applyMerchantTrade } from './market/merchant';
+import { marketTradeType, registerPlayerMarketAction, type MarketTradeRequest } from './market/playerTrade';
 import { driftMarketPrices } from './market/pricing';
 import {
   ensureNeeds,
@@ -175,6 +178,12 @@ export class Engine {
     this.rng = createRng(savedState ?? hashSeed(seed));
     this.detachLogger = attachLogger(db, this.bus);
     registerCollapseRecoveryAction(this.actions);
+    for (const action of queryRows(
+      db,
+      "SELECT DISTINCT type FROM actions WHERE type LIKE 'market:%' AND status IN ('queued', 'in_progress')",
+    )) {
+      registerPlayerMarketAction(this.actions, String(action[0]));
+    }
   }
 
   static bootstrap(db: Database, options: EngineOptions): Engine {
@@ -480,6 +489,7 @@ export class Engine {
   }
 
   queueAction(actorId: string, type: string): number {
+    registerPlayerMarketAction(this.actions, type);
     return enqueueAction(this.db, this.actions, actorId, type, this.tick);
   }
 
@@ -648,6 +658,22 @@ export class Engine {
 
   listMarketListings(siteId: string): MarketListing[] {
     return listListingsForSite(this.db, siteId);
+  }
+
+  getMarketOverview(siteId: string, actorId: string) {
+    return getMarketOverview(this.db, siteId, actorId);
+  }
+
+  getMarketHistory(siteId: string, goodType: string, windowDays: number) {
+    return getMarketHistory(this.db, siteId, goodType, this.tick, windowDays);
+  }
+
+  queryMarketActivity(siteId: string, filter?: MarketActivityFilter) {
+    return queryMarketActivity(this.db, siteId, filter);
+  }
+
+  queueMarketTrade(actorId: string, request: MarketTradeRequest): number {
+    return this.queueAction(actorId, marketTradeType(request));
   }
 
   decrementMarketStock(siteId: string, goodType: string, quantity: number): void {

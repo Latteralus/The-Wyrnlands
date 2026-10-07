@@ -18,6 +18,7 @@ import {
   terminateAllEmploymentsForCompany,
   type JobSlot,
 } from '../jobs/jobs';
+import { recordMarketActivity } from '../market/activity';
 import {
   companyBuyFromMarket,
   getListing,
@@ -505,6 +506,16 @@ function liquidateCompany(
           [MARKET_SITE_ID, item.type, startingPrice, AUCTION_REFERENCE_STOCK],
         );
       }
+      recordMarketActivity(db, {
+        siteId: MARKET_SITE_ID,
+        tick,
+        kind: 'listed',
+        goodType: item.type,
+        quantity: 1,
+        unitPrice: getListing(db, MARKET_SITE_ID, item.type)?.price ?? 0,
+        sellerId: company.id,
+        buyerId: null,
+      });
     } else {
       destroyItem(db, bus, item.id, 'spoiled', tick, {
         note: `${company.name}'s remaining stock spoils after closure.`,
