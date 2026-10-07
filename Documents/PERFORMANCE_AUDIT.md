@@ -199,3 +199,11 @@ Speed is still flat with history: no per-tick or per-day work grows with accumul
 - business-scope `item.transferred` / `item.produced` / `item.consumed` / `item.exported`: 161k combined (38% of rows), each duplicating a `provenance_events` row.
 
 §6's archival options 1 and 2 would remove about 60% of event rows without losing any provenance; they were not applied in the balancing pass because they change log content. Recommended before multi-generation runs or browser autosave.
+
+## Player experience follow-up — 2026-10-06
+
+Foreground simulation now selects `entities.simulation_mode`, independently of household membership. The new named player belongs to a household without entering coarse NPC feeding/wages/needs. Background immigration and NPC cadence retain their explicit mode.
+
+PlayerPlan validation ran 730 days with a real player household both continuously and with a fresh-module checkpoint at day 365. Both reached tick 1,051,200, zero failed nightly audits, and fingerprint `a04078a6373f24b4`. Runtime was 217.3 s continuous and 224.1 s checkpointed (other validation processes overlapped); interval cost stayed about 295–310 ms/day rather than increasing with history. Final DB size was 162.3 MB under the deliberately busy scripted-player stress workload. Exports measured about 41 ms at 80.8 MB; earlier sampling observed 21 ms at 40 MB and 90 ms at 160 MB. Browser autosave runs once a real minute when state changed, plus safe transitions; it never serializes each tick. History growth/archival remains follow-up work.
+
+The harness now supports `--named-player` and processes a final partial sample. Previously `--days 730 --sample 180` actually stopped at day 720 while labeling its result as 730 days. The corrected 730-day results above use `--sample 365`; older measurements should be interpreted by their final tick/sample, not only the requested duration.

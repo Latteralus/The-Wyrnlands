@@ -38,3 +38,11 @@ npm run sim:perf -- --days 730 --sample 30 [--no-player] [--econ out/prefix]
 - `src/hooks/` — React hooks (the game clock: pause/1×/4×/16×, skip controls).
 - `src/data/` — static UI-side content keyed by engine data (e.g. per-site-kind icon/description/actions) — not engine state itself.
 - React screens/components consume `ui-api` only, never `db` or `Engine` directly.
+
+## Player flow and persistence
+
+The app opens at a title screen. New Game creates a named character and household using Standard or Custom starting resources. Character and Home show your own exact possessions, skills, employment, history, and routine preferences. Businesses exposes transactional founding on available parcels; the existing Market lists tools and goods.
+
+Saves live in IndexedDB as raw SQLite bytes, with manual slots and a 60-second autosave while playing. Continue resumes the most recently saved valid life. Export/import `.sqlite` files from Save/Load for portable backups. Schema-22 playable saves migrate forward; newer unsupported schemas/formats and damaged files are rejected. See Documents/DECISIONS.md for the purse/control model and remaining management/housing scope.
+
+Browser smoke: start Vite on `127.0.0.1:5186`, install Playwright (Chrome must be installed), then run `node scripts/player-smoke.mjs`. Set `WYRN_SMOKE_URL` for another server URL and `WYRN_PLAYWRIGHT_MODULE` for an existing Playwright installation. No browser-testing dependency is added to the production game. Long-run player household validation uses `npm run sim:perf -- --named-player --days 730 --sample 180 --checkpoint 0 --no-profile`.

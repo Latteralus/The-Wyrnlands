@@ -5,6 +5,176 @@
   text-align: center;
 }
 
+.title-shell {
+  width: min(900px, 100%);
+  box-sizing: border-box;
+  margin: 4rem auto;
+  padding: 0 1.5rem;
+}
+.title-shell > h1 {
+  text-align: center;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+}
+.title-menu {
+  max-width: 480px;
+  margin: 2rem auto;
+  display: grid;
+  gap: 0.8rem;
+  text-align: center;
+}
+.title-menu button {
+  padding: 0.9rem;
+}
+.eyebrow {
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.8rem;
+}
+.player-panel {
+  padding: 1.5rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+.player-panel h2 {
+  margin-top: 0;
+}
+.primary-nav,
+.player-tabs,
+.panel-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+.primary-nav button[aria-pressed='true'],
+.player-tabs button[aria-pressed='true'],
+.primary-button {
+  background: var(--accent-bg);
+  border-color: var(--accent);
+}
+.character-heading {
+  margin-left: auto;
+  font-size: 0.55em;
+  color: var(--text);
+}
+.form-grid,
+.character-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(240px, 100%), 1fr));
+  gap: 1.2rem;
+  margin: 1rem 0;
+}
+.form-grid label,
+.routine-form label,
+.creation-panel > form > label,
+.save-panel form label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+.player-panel input:not([type='checkbox']),
+.player-panel select {
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0.6rem;
+  font: inherit;
+  background: var(--surface);
+  color: var(--text-h);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+.player-panel input:focus-visible,
+.player-panel select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.player-panel details {
+  margin: 1rem 0;
+}
+.player-panel summary {
+  cursor: pointer;
+  padding: 0.6rem 0;
+}
+.start-summary,
+.app-notice {
+  padding: 1rem;
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  border-radius: 8px;
+}
+.character-grid article {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.character-grid article h3 {
+  margin-top: 0;
+}
+.large-stat {
+  font-size: 1.8rem;
+  color: var(--text-h);
+}
+.player-table {
+  width: 100%;
+  text-align: left;
+  border-collapse: collapse;
+}
+.player-table th,
+.player-table td {
+  padding: 0.65rem 0.4rem;
+  border-bottom: 1px solid var(--border);
+}
+.routine-form {
+  display: grid;
+  gap: 1rem;
+  max-width: 500px;
+}
+.routine-form label:has(input[type='checkbox']),
+.form-grid .checkbox-label {
+  flex-direction: row;
+  align-items: center;
+}
+.equipment-row {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  padding: 0.8rem 0;
+}
+.startup-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 0.5rem;
+  max-width: 520px;
+  padding: 1rem;
+  background: var(--accent-bg);
+  border-radius: 8px;
+}
+.startup-summary dd {
+  margin: 0;
+}
+.save-list {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+.save-list article {
+  padding: 1rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.import-label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 0;
+}
+
 .boot-screen h1 {
   margin-bottom: 0.25rem;
 }

@@ -116,7 +116,8 @@ export function countUnemployedAdults(db: Database): number {
     db,
     `SELECT COUNT(*) FROM household_members
      JOIN households ON households.id = household_members.household_id
-     WHERE households.departed_at_tick IS NULL
+     JOIN entities ON entities.id = household_members.entity_id
+     WHERE households.departed_at_tick IS NULL AND entities.simulation_mode = 'background'
        AND NOT EXISTS (SELECT 1 FROM employment WHERE employment.entity_id = household_members.entity_id AND employment.status = 'active')`,
   );
   return Number(row?.[0] ?? 0);

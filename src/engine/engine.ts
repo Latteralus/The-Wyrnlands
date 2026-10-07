@@ -8,6 +8,7 @@ import {
 } from './actions/actionQueue';
 import { ActionRegistry } from './actions/registry';
 import { runConservationAudit, type AuditResult } from './audit/conservationAudit';
+import { getBusinessType, listBusinessTypes } from './companies/businessTypes';
 import {
   closeCompany,
   createCompany,
@@ -20,13 +21,28 @@ import {
   type NewCompany,
 } from './companies/companies';
 import { applyCompanyDailyCadence, shutDownCompany } from './companies/decisions';
-import { getFoundingRecord, type FoundingRecord } from './companies/founding';
+import {
+  getFoundingRecord,
+  foundCompany,
+  estimateStartupOutlay,
+  type FoundingRecord,
+  type FoundingPlan,
+  type StartupOutlay,
+  type FoundingResult,
+} from './companies/founding';
 import { applyMigrations } from './db/migrationRunner';
 import { exportDatabase, queryRow, queryRows } from './db/sqlite';
-import { createEntity, getEntity, type Entity } from './entities';
+import {
+  createEntity,
+  getEntity,
+  getPlayerEntityId,
+  isPlayerControlled,
+  type SimulationMode,
+  type Entity,
+} from './entities';
 import { EventBus, type EngineEvent, type EventScope } from './eventBus';
-import { equipItem, getWornGear, getWornItemInSlot, wearGear, type WornGear } from './gear/gear';
-import { getGoodDefinition } from './goods/catalog';
+import { equipItem, unequipItem, getWornGear, getWornItemInSlot, wearGear, type WornGear } from './gear/gear';
+import { getGoodDefinition, type GearSlot } from './goods/catalog';
 import { canCarry, getCarriedWeightKg } from './inventory/capacity';
 import {
   destroyItem,
@@ -79,6 +95,8 @@ import {
   type Needs,
   type NeedKey,
 } from './needs/needs';
+import { getRoutinePreferences, setRoutinePreferences, type RoutinePreferences } from './player/preferences';
+import { getPlayerProfile, getPlayerHome } from './player/profile';
 import {
   applyHouseholdDailyCadence,
   applyHouseholdMigrationWeeklyCadence,
@@ -98,6 +116,7 @@ import {
   type Household,
 } from './population/households';
 import { listPresentEntities, type PresentEntity } from './population/presence';
+import { getRecipeForSkill } from './production/recipes';
 import {
   getBusinessProfile,
   getHouseholdProfile,
@@ -224,6 +243,95 @@ export class Engine {
   setStartSeasonIndex(index: number): void {
     this.db.run('UPDATE world_meta SET start_season_index = ? WHERE id = 1', [index]);
     this.startSeasonIndex = index;
+  }
+
+  getPlayerProfile() {
+    return getPlayerProfile(this.db, this.getPlayerEntityId());
+  }
+
+  getPlayerHome() {
+    return getPlayerHome(this.db, this.getPlayerEntityId());
+  }
+
+  equipPlayerItem(itemId: string): void {
+    equipItem(this.db, this.bus, this.getPlayerEntityId(), itemId, this.tick);
+  }
+
+  unequipPlayerSlot(slot: GearSlot): void {
+    unequipItem(this.db, this.bus, this.getPlayerEntityId(), slot, this.tick);
+  }
+
+  listBusinessTypes() {
+    return listBusinessTypes().map((type) => ({
+      ...type,
+      inputGood: getRecipeForSkill(type.skill)?.inputGood ?? null,
+      minimumInputUnits: getRecipeForSkill(type.skill)?.inputUnits ?? 0,
+    }));
+  }
+
+  estimatePlayerBusinessStartup(
+    typeId: string,
+    siteId: string,
+    tenure: TenureKind,
+    inputs: number,
+  ): StartupOutlay | null {
+    const type = getBusinessType(typeId);
+    return type ? estimateStartupOutlay(this.db, type, siteId, tenure, inputs) : null;
+  }
+
+  foundPlayerCompany(plan: Omit<FoundingPlan, 'founderId' | 'payerId'>): FoundingResult {
+    const type = getBusinessType(plan.businessTypeId);
+    const recipe = type ? getRecipeForSkill(type.skill) : null;
+    if (recipe?.inputGood) {
+      const listing = getListing(this.db, 'market', recipe.inputGood);
+      if (
+        !Number.isSafeInteger(plan.initialInputUnits) ||
+        plan.initialInputUnits < recipe.inputUnits ||
+        !listing ||
+        listing.quantity < plan.initialInputUnits
+      )
+        return {
+          ok: false,
+          reason: `Opening stock needs at least ${recipe.inputUnits} ${recipe.inputGood}; only ${listing?.quantity ?? 0} available.`,
+        };
+    }
+    const playerId = this.getPlayerEntityId();
+    const result = foundCompany(
+      this.db,
+      this.bus,
+      { ...plan, founderId: playerId, payerId: playerId },
+      this.tick,
+    );
+    if (result.ok) {
+      this.bus.emit({
+        tick: this.tick,
+        scope: 'personal',
+        actorId: playerId,
+        type: 'player.business_founded',
+        message: `You found ${plan.companyName}.`,
+        data: { companyId: result.companyId },
+      });
+      if (plan.founderWorks) this.ensureWorkShiftAction(`${result.companyId}-${plan.businessTypeId}`);
+    }
+    return result;
+  }
+
+  getPlayerEntityId(): string {
+    const id = getPlayerEntityId(this.db);
+    if (!id) throw new Error('No controlled character in this world.');
+    return id;
+  }
+
+  isPlayerControlled(entityId: string): boolean {
+    return isPlayerControlled(this.db, entityId);
+  }
+
+  getRoutinePreferences(entityId = this.getPlayerEntityId()): RoutinePreferences {
+    return getRoutinePreferences(this.db, entityId);
+  }
+
+  setPlayerRoutinePreferences(prefs: RoutinePreferences): void {
+    setRoutinePreferences(this.db, this.getPlayerEntityId(), prefs);
   }
 
   get tick(): number {
@@ -392,7 +500,7 @@ export class Engine {
 
   // Needs decay before actions resolve each tick, so an action that
   // completes this same tick sees the tick's own decay applied first.
-  // Excludes household members (NPCs) — confirmed empirically that this
+  // Selects foreground simulation explicitly — confirmed empirically that this
   // per-tick, per-entity path cannot scale past a handful of entities (see
   // population/cadence.ts's header comment); NPCs' needs are handled by the
   // daily household cadence instead.
@@ -401,7 +509,7 @@ export class Engine {
     const rows = queryRows(
       this.db,
       `SELECT entity_id FROM needs
-       WHERE entity_id NOT IN (SELECT entity_id FROM household_members)
+       WHERE entity_id IN (SELECT id FROM entities WHERE simulation_mode = 'foreground')
        ORDER BY entity_id ASC`,
     );
     for (const row of rows) {
@@ -817,8 +925,12 @@ export class Engine {
     return listHouseholds(this.db);
   }
 
-  addHouseholdMember(householdId: string, entityId: string): void {
-    addHouseholdMember(this.db, householdId, entityId);
+  addHouseholdMember(
+    householdId: string,
+    entityId: string,
+    mode: SimulationMode = isPlayerControlled(this.db, entityId) ? 'foreground' : 'background',
+  ): void {
+    addHouseholdMember(this.db, householdId, entityId, mode);
   }
 
   listHouseholdMembers(householdId: string): string[] {

@@ -8,7 +8,7 @@ import {
   type OpportunityEstimate,
 } from '../companies/opportunity';
 import { queryRow, queryRows } from '../db/sqlite';
-import { getEntityName } from '../entities';
+import { isBackgroundActor, getEntityName } from '../entities';
 import { getBalance } from '../inventory/wallet';
 import { getRecipeForSkill } from '../production/recipes';
 import { getLevel, MANAGEMENT_SKILL } from '../skills/skills';
@@ -232,7 +232,7 @@ export function applyEntrepreneurshipCadence(
 
   for (const householdId of households) {
     const founderId = listHouseholdMembers(db, householdId)
-      .filter((id) => isFreeToFound(db, id, tick))
+      .filter((id) => isBackgroundActor(db, id) && isFreeToFound(db, id, tick))
       .map((id) => ({ id, management: getLevel(db, id, MANAGEMENT_SKILL) }))
       .sort((a, b) => b.management - a.management || a.id.localeCompare(b.id))[0]?.id;
     if (!founderId) continue;

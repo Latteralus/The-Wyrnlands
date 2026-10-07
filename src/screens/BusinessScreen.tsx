@@ -76,13 +76,16 @@ export function BusinessScreen({
   companyId,
   playerId,
   onAction,
-  inspect,
+  inspect: requestedInspect,
   onToggleInspect,
   onBack,
   ...nav
 }: BusinessScreenProps) {
   const calendar = uiApi.getCalendar();
   const profile = uiApi.getBusinessProfile(companyId);
+  const company = uiApi.getCompany(companyId);
+  const ownBooks = company?.ownerId === playerId || company?.managerId === playerId;
+  const inspect = ownBooks || requestedInspect;
   const slots = uiApi.listJobSlotsForCompany(companyId);
   // §14.3 "Business logs (the ledger as narrative)".
   const log = uiApi.queryActorLog(companyId, 40);
@@ -106,7 +109,7 @@ export function BusinessScreen({
         <button type="button" className="back-button" onClick={onBack}>
           ← Back
         </button>
-        <InspectToggle inspect={inspect} onToggle={onToggleInspect} />
+        {!ownBooks && <InspectToggle inspect={inspect} onToggle={onToggleInspect} />}
       </div>
 
       {profile && (
@@ -233,7 +236,7 @@ export function BusinessScreen({
           <InventoryList lines={profile.stock} empty="Nothing on hand." />
 
           {inspect && (
-            <InspectPanel title="The books">
+            <InspectPanel title="The books" privateKnowledge={!ownBooks}>
               <dl className="profile-facts">
                 <dt>Cash</dt>
                 <dd>{profile.inspect.cash} coin</dd>

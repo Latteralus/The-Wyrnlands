@@ -17,6 +17,34 @@ export interface AuditResult {
 // come from live tables. Anything that mutated items/wallets without going
 // through those functions shows up here as a mismatch.
 export function runConservationAudit(db: Database, bus: EventBus, tick: number): AuditResult {
+  const result = inspectConservation(db, tick);
+  const {
+    passed,
+    coin: { actual: actualCoin },
+    goods: { actual: actualGoods },
+  } = result;
+
+  db.run('INSERT INTO audits (tick, total_coin, total_goods, passed, note) VALUES (?, ?, ?, ?, ?)', [
+    tick,
+    actualCoin,
+    actualGoods,
+    passed ? 1 : 0,
+    passed ? null : 'Conservation drift detected',
+  ]);
+  if (!passed) {
+    bus.emit({
+      tick,
+      scope: 'world',
+      type: 'audit.failed',
+      message: `Conservation audit failed at tick ${tick}: goods ${actualGoods}/${result.goods.expected}, coin ${actualCoin}/${result.coin.expected}.`,
+      data: result as unknown as Record<string, unknown>,
+    });
+  }
+  return result;
+}
+
+// Read-only validation for imports; loading must not add an audit to world history.
+export function inspectConservation(db: Database, tick: number): AuditResult {
   const counters = getConservationCounters(db);
 
   const expectedGoods = counters.goodsCreated - counters.goodsDestroyed;
@@ -27,30 +55,10 @@ export function runConservationAudit(db: Database, bus: EventBus, tick: number):
 
   const passed = expectedGoods === actualGoods && expectedCoin === actualCoin;
 
-  db.run('INSERT INTO audits (tick, total_coin, total_goods, passed, note) VALUES (?, ?, ?, ?, ?)', [
-    tick,
-    actualCoin,
-    actualGoods,
-    passed ? 1 : 0,
-    passed ? null : 'Conservation drift detected',
-  ]);
-
-  const result: AuditResult = {
+  return {
     tick,
     passed,
     goods: { expected: expectedGoods, actual: actualGoods },
     coin: { expected: expectedCoin, actual: actualCoin },
   };
-
-  if (!passed) {
-    bus.emit({
-      tick,
-      scope: 'world',
-      type: 'audit.failed',
-      message: `Conservation audit failed at tick ${tick}: goods ${actualGoods}/${expectedGoods}, coin ${actualCoin}/${expectedCoin}.`,
-      data: result as unknown as Record<string, unknown>,
-    });
-  }
-
-  return result;
 }

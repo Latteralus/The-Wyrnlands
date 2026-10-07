@@ -19,8 +19,26 @@ export function getEntityName(db: Database, id: string): string {
   return getEntity(db, id)?.name ?? id;
 }
 
-// The player's entity is named "You" — narration about them reads in the
-// second person ("You collapse…") rather than as a name ("You collapses…").
+export type SimulationMode = 'foreground' | 'background';
+
+export function getPlayerEntityId(db: Database): string | null {
+  const row = queryRow(db, 'SELECT player_entity_id FROM world_meta WHERE id = 1');
+  return typeof row?.[0] === 'string' ? row[0] : null;
+}
+
+export function isPlayerControlled(db: Database, id: string): boolean {
+  return getPlayerEntityId(db) === id;
+}
+
+export function isBackgroundActor(db: Database, id: string): boolean {
+  return queryRow(db, 'SELECT simulation_mode FROM entities WHERE id = ?', [id])?.[0] === 'background';
+}
+
+export function setSimulationMode(db: Database, id: string, mode: SimulationMode): void {
+  db.run('UPDATE entities SET simulation_mode = ? WHERE id = ?', [mode, id]);
+}
+
+// Compatibility name for narration callers; identity is independent of display name.
 export function isYou(db: Database, id: string): boolean {
-  return getEntityName(db, id) === 'You';
+  return isPlayerControlled(db, id);
 }

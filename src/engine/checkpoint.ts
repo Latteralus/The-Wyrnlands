@@ -31,12 +31,11 @@ export interface CheckpointOptions {
   loadFreshSqlJs: () => Promise<SqlJsStatic>;
 }
 
-// IMPORTANT — the Engine this returns has an *empty* ActionRegistry. Action
+// The returned Engine has an empty content ActionRegistry. Action
 // *definitions* are code, held only in-memory (§Stage 0's decision), never
 // persisted to the DB — a rehydrated Engine is exactly a reload from the
 // registry's point of view. Callers must re-run whatever registers their
-// action types (e.g. seed/demoWorld.ts's registerDemoActionTypes(), via
-// seedDemoWorld()) on the returned Engine before using it, exactly as they
+// action types (actions/gameActions.ts's registerGameActions()) on the returned Engine before using it, exactly as they
 // already must after Engine.bootstrap() itself. Forgetting this throws
 // "Unknown action type" the moment a queued action tries to resolve — not
 // a checkpoint.ts bug, the same pre-existing reload contract every caller

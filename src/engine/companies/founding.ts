@@ -122,6 +122,20 @@ function newCompanyId(db: Database, founderId: string, tick: number): string {
 }
 
 export function foundCompany(db: Database, bus: EventBus, plan: FoundingPlan, tick: number): FoundingResult {
+  if (
+    ![plan.positions, plan.postedWage, plan.investment, plan.initialInputUnits].every(
+      (n) => Number.isSafeInteger(n) && n >= 0,
+    ) ||
+    !['lease', 'freehold'].includes(plan.tenureKind) ||
+    !plan.companyName.trim() ||
+    plan.companyName.length > 100 ||
+    !getEntity(db, plan.founderId) ||
+    !getEntity(db, plan.payerId)
+  )
+    return {
+      ok: false,
+      reason: 'Choose a valid company name, founder, tenure, and whole non-negative amounts.',
+    };
   const type = getBusinessType(plan.businessTypeId);
   if (!type) return { ok: false, reason: `unknown business type "${plan.businessTypeId}"` };
   if (plan.positions < 1 || plan.positions > type.startingMaxPositions) {

@@ -1,5 +1,5 @@
 import { queryRow } from '../db/sqlite';
-import { getEntityName } from '../entities';
+import { isPlayerControlled, getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import {
   countActiveItemsOfType,
@@ -284,7 +284,9 @@ const DRAW_CASH_CEILING_WEEKS = 6;
 
 function payOwnerDraw(db: Database, bus: EventBus, company: Company, slots: JobSlot[], tick: number): void {
   if (!company.ownerId) return;
-  const ownerHousehold = getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId;
+  const ownerHousehold = isPlayerControlled(db, company.ownerId)
+    ? company.ownerId
+    : (getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId);
   const ledger = summarizeLedger(db, company.id, Math.max(0, tick - DRAW_WINDOW_DAYS * MINUTES_PER_DAY));
   const undrawnProfit = Math.floor(ledger.net * DRAW_SHARE) - ledger.ownerDraws;
   const wages = weeklyWageBill(db, slots);
@@ -579,7 +581,9 @@ export function shutDownCompany(
 
   const remaining = getBalance(db, company.id);
   if (remaining > 0 && company.ownerId) {
-    const ownerPurse = getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId;
+    const ownerPurse = isPlayerControlled(db, company.ownerId)
+      ? company.ownerId
+      : (getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId);
     transferCoin(
       db,
       bus,
@@ -662,7 +666,9 @@ function considerOwnerInjection(
     if (recent.revenue - recent.materialCost <= 0) return;
   }
 
-  const purse = getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId;
+  const purse = isPlayerControlled(db, company.ownerId)
+    ? company.ownerId
+    : (getHouseholdIdForMember(db, company.ownerId) ?? company.ownerId);
   const spare = getBalance(db, purse) - OWNER_CUSHION_FOOD_WEEKS * weeklyFoodCost(db, purse);
   const willingShare = 0.25 + 0.75 * getTrait(db, company.ownerId, 'risk_tolerance');
   const amount = Math.floor(Math.min(wages * INJECTION_TARGET_WEEKS - cash, spare * willingShare));
@@ -800,14 +806,16 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
 
     const managementLevel = managementLevelFor(db, company);
     const slots = listJobSlotsForCompany(db, company.id);
+    const managerId = getCompanyManagerId(company);
+    const playerManaged = managerId !== null && isPlayerControlled(db, managerId);
 
     if (tryCloseCompany(db, bus, company, managementLevel, tick)) continue;
-    if (day % 7 === 0 && tryWindDown(db, bus, company, managementLevel, tick)) continue;
+    if (!playerManaged && day % 7 === 0 && tryWindDown(db, bus, company, managementLevel, tick)) continue;
 
-    considerOwnerInjection(db, bus, company, slots, managementLevel, tick);
+    if (!playerManaged) considerOwnerInjection(db, bus, company, slots, managementLevel, tick);
     restockEquipment(db, bus, company, slots, tick);
-    tryUpgrade(db, bus, company, slots, managementLevel, tick);
-    if (day % 7 === 0) adjustStaffing(db, bus, company, slots, managementLevel, tick);
+    if (!playerManaged) tryUpgrade(db, bus, company, slots, managementLevel, tick);
+    if (!playerManaged && day % 7 === 0) adjustStaffing(db, bus, company, slots, managementLevel, tick);
     for (const slot of slots) {
       const recipe = getRecipeForSkill(slot.skill);
       if (recipe?.inputGood) restockInputs(db, bus, company, slot, recipe, managementLevel, tick);
@@ -847,7 +855,7 @@ export function applyCompanyDailyCadence(db: Database, bus: EventBus, tick: numb
           data: { amount: rent },
         });
       }
-      payOwnerDraw(db, bus, company, slots, tick);
+      if (!isPlayerControlled(db, company.ownerId ?? '')) payOwnerDraw(db, bus, company, slots, tick);
       recordMilestones(db, bus, company, slots, tick);
       // §9.2: "NPC Management skill grows with tenure like any other skill"
       // — never implemented before 2026-10-06, so a sloppy owner stayed

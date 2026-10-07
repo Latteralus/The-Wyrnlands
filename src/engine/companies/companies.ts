@@ -5,8 +5,7 @@ import type { Database } from 'sql.js';
 // §9.1 Structure. A company is also an entities row (its id is the
 // container/owner id its wallet and inventory hang off of, same as a
 // person's) — see Engine.createCompany, which creates that entities row
-// first. NPC-run for now; player-owned companies (§9.1 "Company screens
-// (player-owned)") arrive Stage 6.
+// first. The same company model supports both NPC and player ownership.
 export interface Company {
   id: string;
   name: string;

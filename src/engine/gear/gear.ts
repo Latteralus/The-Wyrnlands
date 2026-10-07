@@ -19,6 +19,8 @@ export interface WornGear {
 export function equipItem(db: Database, bus: EventBus, entityId: string, itemId: string, tick: number): void {
   const item = getItem(db, itemId);
   if (!item) throw new Error(`Unknown item: "${itemId}"`);
+  if (item.status !== 'active' || item.containerId !== entityId)
+    throw new Error('You can only equip an active item you carry.');
   const def = getGoodDefinition(item.type);
   if (!def.slot) throw new Error(`"${item.type}" isn't equippable gear`);
 
@@ -38,6 +40,27 @@ export function equipItem(db: Database, bus: EventBus, entityId: string, itemId:
       ? `You put on your ${item.type}.`
       : `${getEntityName(db, entityId)} puts on a ${item.type}.`,
     data: { itemId, slot: def.slot },
+  });
+}
+
+export function unequipItem(
+  db: Database,
+  bus: EventBus,
+  entityId: string,
+  slot: GearSlot,
+  tick: number,
+): void {
+  const worn = getWornItemInSlot(db, entityId, slot);
+  if (!worn) return;
+  db.run('DELETE FROM gear WHERE entity_id = ? AND slot = ?', [entityId, slot]);
+  bus.emit({
+    tick,
+    scope: 'personal',
+    actorId: entityId,
+    type: 'gear.unequipped',
+    message: isYou(db, entityId)
+      ? `You take off your ${worn.goodType}.`
+      : `${getEntityName(db, entityId)} takes off their ${worn.goodType}.`,
   });
 }
 

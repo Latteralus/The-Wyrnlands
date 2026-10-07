@@ -1,17 +1,8 @@
+import { registerGameActions } from '../actions/gameActions';
 import { getGoodDefinition } from '../goods/catalog';
-import { PERSONAL_CARRY_CAPACITY_KG } from '../inventory/capacity';
-import { consumeActiveItems, countActiveItemsOfType, findFirstActiveItem } from '../inventory/items';
-import { createWorkShiftActionDefinition } from '../jobs/shifts';
-import { createBuyActionDefinition, createSellActionDefinition, describeSources } from '../market/market';
 import { withOptional } from '../optional';
-import { ensureParish, PARISH_ID, isWorkday } from '../population/cadence';
+import { ensureParish, PARISH_ID } from '../population/cadence';
 import { generateNpcPopulation } from '../population/npcGen';
-import {
-  drawWater,
-  stockUpOnBread,
-  supplyDays,
-  WATER_PAILS_PER_PERSON_PER_DAY,
-} from '../population/provisions';
 import {
   BAKING_SKILL,
   FARMING_SKILL,
@@ -20,483 +11,85 @@ import {
   MILLING_SKILL,
   WOODCUTTING_SKILL,
 } from '../skills/skills';
-import { MINUTES_PER_DAY } from '../time/clock';
-import type { Engine, RoutineChoice } from '../engine';
-
-// This seeds just enough world for every screen to have real data: a real
-// survival loop (gather firewood on common land, sell it, buy bread, drink
-// for free at the well, rest, replace gear as it wears out — Stage 2), a
-// real first job (the farm as employer — §Stage 3), and, from Stage 4, a
-// living settlement of ~40 NPCs in households. Replaced by real rolled
-// starting conditions in Stage 5 (§5.4).
-export const PLAYER_ID = 'player';
-
-export const REST_BUNK_PRICE = 15;
-const REST_BUNK_ENERGY = 50;
-const REST_ROUGH_ENERGY = 20;
-const SHOE_WEAR_PER_CHOP = 10; // maxDurability 200 → wears out roughly every 20 chops
-const SLEEP_DURATION_TICKS = 8 * 60;
-// What a night's sleep gives back, spread across the night (an action's
-// restoresPerTick, needs.ts): a bunk all of it, rough ground most.
-const SLEEP_ROUGH_ENERGY = 70;
-
-export const FARM_SITE_ID = 'farm';
-export const FARM_COMPANY_ID = 'oster_farm';
-export const FARM_JOB_SLOT_ID = 'oster_farm_farmhand';
-export const FARM_SHIFT_DURATION_TICKS = 360; // a six-hour shift (§14.4)
-const FARM_WAGE_MIN = 20;
-const FARM_WAGE_MAX = 35;
-// Sized for up to FARM_JOB_CAPACITY workers' wages over a full 90-day season
-// even before §Stage 5's grain-selling revenue ramps up — generous headroom
-// rather than a tightly-balanced number (§17's balance harness is the place
-// for real tuning); a company that would eventually go insolvent over a
-// long enough run with badly-managed selling is a realistic outcome
-// (§11.5), not a bug — see shifts.ts's affordableWage cap for what happens
-// when it does, and companies/decisions.ts's insolvency signal.
-const FARM_STARTING_CAPITAL = 12500;
-const FARM_JOB_CAPACITY = 10; // the farm is the village's main employer (§3): most hands work the land
-
-export const LOGGING_SITE_ID = 'forest'; // the camp works out of the existing forest site, no new location needed
-export const LOGGING_COMPANY_ID = 'hollows_edge_logging';
-export const LOGGING_JOB_SLOT_ID = 'hollows_edge_logging_woodcutter';
-const LOGGING_SHIFT_DURATION_TICKS = 360;
-const LOGGING_WAGE_MIN = 15;
-const LOGGING_WAGE_MAX = 30;
-const LOGGING_STARTING_CAPITAL = 12500;
-const LOGGING_JOB_CAPACITY = 4; // the owner-operator plus the same 3 NPC woodcutters as before (still none open for the player)
-
-// §Stage 5's first real transformation chain: grain (farm) -> flour (mill)
-// -> bread (bakery), closing the loop that used to be a one-way merchant
-// import (see market.ts's producerCompanyId). Modest starting capital —
-// unlike the farm/logging camp above, these two are meant to actually earn
-// their keep from day one via companies/decisions.ts's daily selling.
-export const MILL_SITE_ID = 'mill';
-export const MILL_COMPANY_ID = 'riverside_mill';
-export const MILL_JOB_SLOT_ID = 'riverside_mill_miller';
-const MILL_SHIFT_DURATION_TICKS = 360;
-const MILL_WAGE_MIN = 20;
-const MILL_WAGE_MAX = 35;
-const MILL_STARTING_CAPITAL = 2500;
-const MILL_JOB_CAPACITY = 2;
-
-export const BAKERY_SITE_ID = 'bakery';
-export const BAKERY_COMPANY_ID = 'village_bakery';
-export const BAKERY_JOB_SLOT_ID = 'village_bakery_baker';
-const BAKERY_SHIFT_DURATION_TICKS = 360;
-const BAKERY_WAGE_MIN = 20;
-const BAKERY_WAGE_MAX = 35;
-const BAKERY_STARTING_CAPITAL = 2500;
-const BAKERY_JOB_CAPACITY = 2;
-
-// §9.2 "some NPC companies are simply better run than others." Each
-// company gets a dedicated owner-operator NPC whose starting Management XP
-// (skills.ts: 200 XP/level, level 5 max) is deliberately spread across the
-// whole range rather than uniform — a real, observable divergence in
-// companies/decisions.ts's restocking reliability (higher management =
-// checks stock more often, buys bigger batches), not just a flavor label.
-// Management currently weights *buying* only, not selling efficiency or
-// purchase restraint relative to actual throughput — a real 90-day headless
-// run (2026-07-19, see DECISIONS.md) showed the level-5-managed mill buying
-// grain faster than it could resell flour, leaving it balance-fragile
-// (briefly insolvent), while the level-0-managed bakery — benefiting from
-// guaranteed high-volume consumer demand for bread — was the run's clear
-// profit leader. Not the "well-managed thrives / sloppy struggles" story
-// this was seeded expecting; left as an honest, real finding and a named
-// follow-up (§11.5's emergence target isn't disproven, just not yet
-// delivered by this mechanism alone) rather than silently rewritten to fit.
-// Placeholder spread either way — revisit with the balance harness (§17).
-const FARM_OWNER_MANAGEMENT_XP = 650; // level 3
-const LOGGING_OWNER_MANAGEMENT_XP = 450; // level 2
-const MILL_OWNER_MANAGEMENT_XP = 1100; // level 5
-const BAKERY_OWNER_MANAGEMENT_XP = 50; // level 0
-const OWNER_STARTING_RESERVE = 400; // same placeholder "modest family savings" as generated NPC households
-
-// §5.4 "Starting Conditions Are Rolled... the recent harvest quality, each
-// business's health... current season, price levels, and job availability.
-// Two new games in the same village play differently." The starting season
-// itself is rolled by Engine.ensureWorldMeta (a core calendar concept, not
-// seed-content); everything else rolled here is genuinely this seed's own
-// content decision. "Job availability" is the one named factor *not*
-// separately rolled this slice — the existing NPC-generation randomness
-// already gives some natural variance in who's hired where, but nothing
-// here deliberately widens or narrows it further; a flagged, honest scope
-// cut, not a silent omission.
-const PRICE_LEVEL_MIN = 0.85;
-const PRICE_LEVEL_RANGE = 0.4; // rolls a market-wide price level in [0.85, 1.25)
-const MAX_STARTING_GRAIN = 40; // a bountiful recent harvest leaves the farm with up to this much grain already in store
-const FAILED_BUSINESS_CHANCE = 0.2; // §5.4's own example: "one may be freshly failed — the shuttered mill opening"
-const PARISH_ENDOWMENT = 500;
-
-// What each parcel is worth (world/tenure.ts prices leases and purchases
-// from it). The seeded companies hold theirs freehold, as they always
-// implicitly did; when one closes its land is free for the next taker.
-const FARM_LAND_VALUE = 800;
-const FOREST_LAND_VALUE = 500;
-const MILL_LAND_VALUE = 1000;
-const BAKERY_LAND_VALUE = 700;
-const VACANT_PARCELS = [
-  { id: 'eastfield', name: 'Eastfield', kind: 'farm', x: 6, y: -4, landValue: 600 },
-  { id: 'brook_meadow', name: 'Brook Meadow', kind: 'farm', x: -5, y: 4, landValue: 600 },
-  { id: 'northwood', name: 'Northwood Lot', kind: 'forest', x: 8, y: 6, landValue: 400 },
-  { id: 'old_bakehouse', name: 'The Old Bakehouse', kind: 'bakery', x: 1, y: 4, landValue: 600 },
-];
-
-function rolledPrice(basePrice: number, priceLevel: number): number {
-  return Math.max(1, Math.round(basePrice * priceLevel));
-}
-
-export const NPC_HOUSEHOLD_COUNT = 20;
-// §9.2: one single-person household per company owner-operator (farm,
-// logging, mill, bakery — seedCompanyOwner) — real households, not test
-// fixtures, so anything counting engine.listHouseholds() needs to account
-// for them alongside the generated NPC ones.
-export const COMPANY_OWNER_HOUSEHOLD_COUNT = 4;
-
-// Action *definitions* are code, held only in the ActionRegistry in memory
-// (§Stage 0 decision) — they never persist to the DB. A reloaded save (or,
-// as it turns out, a rehydrated Engine — see the Stage 2 scenario test) gets
-// a brand-new, empty registry, so this must run on *every* fresh Engine
-// instance regardless of whether the world was already seeded. Discovered
-// as a real latent bug via that rehydration experiment, not hypothetical:
-// seedDemoWorld's old single-guard-clause shape returned early on an
-// already-seeded DB, silently skipping registration entirely.
-export function registerDemoActionTypes(engine: Engine): void {
-  engine.registerActionType({
-    type: 'draw_water',
-    durationTicks: 10,
-    // Several times a day, and the thirst bar shows it — not worth a log line.
-    resolve: () => ({
-      success: true,
-      message: 'You draw a bucket of cold, clean water and drink.',
-      quiet: true,
-    }),
-    applyOutcome: (ctx) => engine.restoreNeed(ctx.actorId, 'thirst', 55, 'The water leaves you refreshed.'),
-  });
-
-  engine.registerActionType({
-    type: 'rest_bunk',
-    durationTicks: 60,
-    // Energy comes back during the rest, not all at once at the end (and
-    // isn't draining meanwhile) — needs.ts's restoresPerTick.
-    restoresPerTick: { energy: REST_BUNK_ENERGY / 60 },
-    resolve: (_rng, ctx) =>
-      engine.getBalance(ctx.actorId) >= REST_BUNK_PRICE
-        ? { success: true, message: `You pay ${REST_BUNK_PRICE} coin for a bunk and sleep well.` }
-        : { success: false, message: "You can't afford a bunk tonight." },
-    applyOutcome: (ctx, outcome) => {
-      if (!outcome.success) return;
-      engine.sinkCoin(ctx.actorId, REST_BUNK_PRICE, 'Paid for a tavern bunk.');
-      engine.restoreNeed(ctx.actorId, 'warmth', 30, 'The hearth kept you warm all night.');
-    },
-  });
-
-  // A full night's sleep (§6 shelter ladder): one eight-hour rest — at the
-  // tavern if you can pay, rough if not — instead of a string of hour-long
-  // naps. What the daily routine (playerRoutine below) uses at bedtime.
-  engine.registerActionType({
-    type: 'sleep_bunk',
-    durationTicks: SLEEP_DURATION_TICKS,
-    restoresPerTick: { energy: 100 / SLEEP_DURATION_TICKS },
-    resolve: (_rng, ctx) =>
-      engine.getBalance(ctx.actorId) >= REST_BUNK_PRICE
-        ? {
-            success: true,
-            message: `You sleep the night in a bunk at the Sleeping Ox (${REST_BUNK_PRICE} coin) and wake rested.`,
-          }
-        : {
-            success: false,
-            message: "You can't afford a bunk, and spend a cold night in the doorway instead.",
-          },
-    applyOutcome: (ctx, outcome) => {
-      // Energy came back through the night (restoresPerTick); the bunk's
-      // price and the hearth's warmth are settled in the morning. Turned
-      // away for want of coin, the night in the doorway rested you less.
-      if (!outcome.success) {
-        engine.restoreNeed(ctx.actorId, 'energy', -100 + SLEEP_ROUGH_ENERGY);
-        return;
-      }
-      engine.sinkCoin(ctx.actorId, REST_BUNK_PRICE, 'Paid for a tavern bunk.');
-      engine.restoreNeed(ctx.actorId, 'warmth', 60);
-    },
-  });
-  engine.registerActionType({
-    type: 'sleep_rough',
-    durationTicks: SLEEP_DURATION_TICKS,
-    restoresPerTick: { energy: SLEEP_ROUGH_ENERGY / SLEEP_DURATION_TICKS },
-    resolve: () => ({
-      success: true,
-      message: 'You sleep rough under the eaves and wake stiff, but rested enough.',
-    }),
-  });
-
-  // Provisions (population/provisions.ts) — what the player keeps in their
-  // pack: pails from the well, and bread bought ahead.
-  engine.registerActionType({
-    type: 'fetch_water',
-    durationTicks: 20,
-    resolve: (_rng, ctx) => {
-      const have = countActiveItemsOfType(ctx.db, ctx.actorId, 'water');
-      const want = Math.max(0, PACK_WATER_PAILS - have);
-      const fits = Math.floor(
-        Math.max(0, PERSONAL_CARRY_CAPACITY_KG - engine.getCarriedWeightKg(ctx.actorId)) /
-          getGoodDefinition('water').weightKg,
-      );
-      const pails = Math.min(want, fits);
-      return pails > 0
-        ? {
-            success: true,
-            message: `You fill ${pails} pails at the well and carry them back.`,
-            data: { pails },
-          }
-        : { success: false, message: "You can't carry any more water.", quiet: true };
-    },
-    applyOutcome: (ctx, outcome) => {
-      if (!outcome.success) return;
-      drawWater(
-        ctx.db,
-        ctx.bus,
-        ctx.actorId,
-        countActiveItemsOfType(ctx.db, ctx.actorId, 'water') + Number(outcome.data?.pails),
-        ctx.tick,
-        ctx.actorId,
-      );
-    },
-  });
-  engine.registerActionType({
-    type: 'drink',
-    durationTicks: 5,
-    resolve: (_rng, ctx) =>
-      findFirstActiveItem(ctx.db, ctx.actorId, 'water')
-        ? { success: true, message: 'You drink from a pail.', quiet: true }
-        : { success: false, message: 'You have no water with you.' },
-    applyOutcome: (ctx, outcome) => {
-      if (!outcome.success) return;
-      consumeActiveItems(ctx.db, ctx.bus, ctx.actorId, 'water', 1, ctx.tick, {
-        actorId: ctx.actorId,
-        note: 'Drunk.',
-      });
-      engine.restoreNeed(ctx.actorId, 'thirst', getGoodDefinition('water').thirstRestored ?? 0);
-    },
-  });
-  engine.registerActionType({
-    type: 'stock_up_bread',
-    durationTicks: 20,
-    resolve: () => {
-      const listing = engine.getMarketListing('market', 'bread');
-      return listing && listing.quantity > 0
-        ? { success: true, message: 'You stock up on bread.', quiet: true }
-        : { success: false, message: "There's no bread to be had at the stall." };
-    },
-    applyOutcome: (ctx, outcome) => {
-      if (!outcome.success) return;
-      const purchase = stockUpOnBread(
-        ctx.db,
-        ctx.bus,
-        ctx.actorId,
-        PACK_BREAD_LOAVES,
-        0, // food before a bed: nothing held back for a bunk
-        ctx.tick,
-        'Bought bread at the market.',
-      );
-      if (!purchase || purchase.itemIds.length === 0) return;
-      ctx.bus.emit({
-        tick: ctx.tick,
-        scope: 'personal',
-        actorId: ctx.actorId,
-        type: 'market.purchase',
-        message:
-          `You buy ${purchase.itemIds.length === 1 ? 'a loaf' : `${purchase.itemIds.length} loaves`} of bread at the market stall for ${purchase.totalCost} coin ` +
-          `(${purchase.unitPrice} each) to keep in your pack — ${describeSources(ctx.db, purchase.sources)}.`,
-        data: {
-          goodType: 'bread',
-          units: purchase.itemIds.length,
-          unitPrice: purchase.unitPrice,
-          cost: purchase.totalCost,
-          sources: purchase.sources,
-        },
-      });
-    },
-  });
-
-  engine.setRoutinePolicy(playerRoutine);
-
-  // Free, lower-quality rest available anywhere (§6 shelter ladder's bottom
-  // rung — "rough") so a coinless actor is never locked out of recovering.
-  engine.registerActionType({
-    type: 'rest_rough',
-    durationTicks: 90,
-    restoresPerTick: { energy: REST_ROUGH_ENERGY / 90 },
-    resolve: () => ({ success: true, message: 'You rest as best you can, rough as it is.' }),
-  });
-
-  engine.registerActionType({
-    type: 'read_notices',
-    durationTicks: 5,
-    resolve: () => ({ success: true, message: 'You read the notices pinned to the board.' }),
-  });
-
-  // Consuming food is a distinct step from buying it (§8.1 rule 1: "every
-  // transfer transactional and logged" — the bread's provenance chain runs
-  // produced → transferred (if hauled) → consumed). Available anywhere, like
-  // rest_rough — eating doesn't require a specific location.
-  engine.registerActionType({
-    type: 'eat',
-    durationTicks: 10,
-    resolve: (_rng, ctx) => {
-      const bread = findFirstActiveItem(ctx.db, ctx.actorId, 'bread');
-      return bread
-        ? {
-            success: true,
-            message: 'You sit down and eat a loaf of bread, slowly, to make it last.',
-            data: { itemId: bread.id },
-          }
-        : { success: false, message: 'You have nothing to eat.' };
-    },
-    applyOutcome: (ctx, outcome) => {
-      if (!outcome.success) return;
-      engine.destroyItem(String(outcome.data?.itemId), 'consumed', {
-        actorId: ctx.actorId,
-        note: 'Eaten.',
-      });
-      engine.restoreNeed(
-        ctx.actorId,
-        'hunger',
-        getGoodDefinition('bread').hungerRestored ?? 0,
-        'A filling meal.',
-      );
-    },
-  });
-
-  engine.registerActionType({
-    type: 'chop_wood',
-    durationTicks: 30,
-    // Skill-gated failure (§13.2): unskilled work is allowed but wastes the
-    // attempt more often. Labor is the only skill that exists pre-Stage 3.
-    resolve: (rng, ctx) => {
-      const chance = engine.getSkillSuccessChance(ctx.actorId, LABOR_SKILL);
-      return rng() < chance
-        ? { success: true, message: 'You fell a length of good timber.' }
-        : { success: false, message: 'You misjudge the swing and ruin the cut. The timber splits wrong.' };
-    },
-    applyOutcome: (ctx, outcome) => {
-      // §13.2: "each labor-tick grants XP" regardless of the attempt's
-      // outcome — time spent working is what teaches the skill.
-      engine.addSkillXp(ctx.actorId, LABOR_SKILL, 30);
-      engine.wearGear(ctx.actorId, 'feet', SHOE_WEAR_PER_CHOP);
-
-      if (!outcome.success) return;
-      if (!engine.canCarry(ctx.actorId, getGoodDefinition('firewood').weightKg)) return;
-      engine.produceItem({
-        id: `${ctx.actorId}-firewood-${ctx.tick}`,
-        type: 'firewood',
-        containerId: ctx.actorId,
-        actorId: ctx.actorId,
-        note: 'Firewood, freshly cut.',
-      });
-    },
-  });
-
-  engine.registerActionType(createBuyActionDefinition('market', 'bread'));
-  engine.registerActionType(createBuyActionDefinition('market', 'shoes'));
-  engine.registerActionType(createBuyActionDefinition('market', 'cloak'));
-  engine.registerActionType(createSellActionDefinition('market', 'firewood'));
-
-  engine.registerActionType(
-    createWorkShiftActionDefinition(FARM_JOB_SLOT_ID, { durationTicks: FARM_SHIFT_DURATION_TICKS }),
-  );
-  engine.registerActionType(
-    createWorkShiftActionDefinition(LOGGING_JOB_SLOT_ID, { durationTicks: LOGGING_SHIFT_DURATION_TICKS }),
-  );
-  engine.registerActionType(
-    createWorkShiftActionDefinition(MILL_JOB_SLOT_ID, { durationTicks: MILL_SHIFT_DURATION_TICKS }),
-  );
-  engine.registerActionType(
-    createWorkShiftActionDefinition(BAKERY_JOB_SLOT_ID, { durationTicks: BAKERY_SHIFT_DURATION_TICKS }),
-  );
-}
-
-// The daily routine of an autonomous character (Engine.setAutonomous — the
-// player, in the interactive game): what they do whenever they're idle.
-// They keep their pack provisioned like a household keeps its larder
-// (population/provisions.ts): pails from the well, a few days' bread bought
-// at the stall (never anything else — shoes, cloaks and tools stay your
-// decision), and a bunk only if that leaves bread money.
-//   - Before anything long (a shift, a night's sleep) they drink their fill
-//     and eat if peckish: thirst empties in ten hours (needs.ts), so a
-//     shift or a night started thirsty ends in a collapse.
-//   - On a workday, between 6 in the morning and 2 in the afternoon, they go
-//     to work if they haven't already today.
-//   - From 8 at night (until 2 in the morning) they turn in for the night —
-//     a bunk if they can spare the coin.
-//   - Otherwise they drink when thirsty, eat when hungry, and rest if
-//     exhausted; and in a winter chill a bunk warms them up.
-const WORK_START_HOUR = 6;
-const WORK_LAST_START_HOUR = 14;
-// What the player keeps in their pack: two days of water (the well is
-// free and close, and there's no home to keep a barrel in yet), and bread
-// for as many days as a household would hold (provisions.ts — bread spoils,
-// so about three, plus today) at the loaf and a bit a day hunger costs
-// (needs.ts: empty in 20 hours; a loaf fills you).
-const PACK_WATER_PAILS = Math.ceil(2 * WATER_PAILS_PER_PERSON_PER_DAY);
-const PACK_BREAD_LOAVES = Math.ceil(1.2 * (supplyDays('bread', false) + 1));
-const BEDTIME_HOUR = 20;
-// Too late in the night to start a full night's sleep after this — an
-// exhausted character naps instead.
-const LAST_BEDTIME_HOUR = 2;
-// Exhausted enough to rest whatever the hour: a collapse is close.
-const EXHAUSTED_ENERGY = 8;
-
-export function playerRoutine(
-  engine: Engine,
-  actorId: string,
-  lastShiftDay: number | null,
-): RoutineChoice | null {
-  const needs = engine.getNeeds(actorId);
-  if (!needs) return null;
-  const tick = engine.tick;
-  const calendar = engine.calendarAt(tick);
-  const hour = Math.floor(calendar.minuteOfDay / 60);
-  const today = Math.floor(tick / MINUTES_PER_DAY);
-  const employment = engine.getEmployment(actorId);
-  const hasBread = findFirstActiveItem(engine.db, actorId, 'bread') !== null;
-  const breadPrice =
-    engine.getMarketListing('market', 'bread')?.price ?? getGoodDefinition('bread').basePrice;
-  // Food comes before a bed: a bunk only if a day's bread is still covered.
-  const canAffordBunk = engine.getBalance(actorId) >= REST_BUNK_PRICE + breadPrice;
-
-  const shiftDue =
-    employment !== null &&
-    isWorkday(tick) &&
-    lastShiftDay !== today &&
-    hour >= WORK_START_HOUR &&
-    hour < WORK_LAST_START_HOUR;
-  const bedtime = hour >= BEDTIME_HOUR || hour < LAST_BEDTIME_HOUR;
-  const settingOff = shiftDue || (bedtime && needs.energy < 90);
-
-  const pails = countActiveItemsOfType(engine.db, actorId, 'water');
-  const loaves = countActiveItemsOfType(engine.db, actorId, 'bread');
-  if (needs.thirst < (settingOff ? 90 : 50)) return { type: pails > 0 ? 'drink' : 'fetch_water' };
-  if (hasBread && needs.hunger < (settingOff ? 50 : 30)) return { type: 'eat' };
-  // Keep the pack provisioned: water when it's down to a day's worth, bread
-  // when there's less than a day's left and a loaf to be had.
-  if (pails < Math.ceil(WATER_PAILS_PER_PERSON_PER_DAY) && !bedtime) return { type: 'fetch_water' };
-  if (loaves < 2 && !bedtime && engine.getBalance(actorId) >= breadPrice) {
-    const listing = engine.getMarketListing('market', 'bread');
-    if (listing && listing.quantity > 0) return { type: 'stock_up_bread' };
-  }
-  if (needs.energy < EXHAUSTED_ENERGY) return { type: canAffordBunk ? 'rest_bunk' : 'rest_rough' };
-  if (shiftDue && employment) return { workShiftJobSlotId: employment.jobSlotId };
-  if (bedtime && needs.energy < 90) return { type: canAffordBunk ? 'sleep_bunk' : 'sleep_rough' };
-  if (calendar.season === 'winter' && needs.warmth < 30 && canAffordBunk) return { type: 'rest_bunk' };
-  return null;
-}
+import {
+  PLAYER_ID,
+  FARM_SITE_ID,
+  FARM_COMPANY_ID,
+  FARM_JOB_SLOT_ID,
+  FARM_SHIFT_DURATION_TICKS,
+  FARM_WAGE_MIN,
+  FARM_WAGE_MAX,
+  FARM_STARTING_CAPITAL,
+  FARM_JOB_CAPACITY,
+  LOGGING_SITE_ID,
+  LOGGING_COMPANY_ID,
+  LOGGING_JOB_SLOT_ID,
+  LOGGING_SHIFT_DURATION_TICKS,
+  LOGGING_WAGE_MIN,
+  LOGGING_WAGE_MAX,
+  LOGGING_STARTING_CAPITAL,
+  LOGGING_JOB_CAPACITY,
+  MILL_SITE_ID,
+  MILL_COMPANY_ID,
+  MILL_JOB_SLOT_ID,
+  MILL_SHIFT_DURATION_TICKS,
+  MILL_WAGE_MIN,
+  MILL_WAGE_MAX,
+  MILL_STARTING_CAPITAL,
+  MILL_JOB_CAPACITY,
+  BAKERY_SITE_ID,
+  BAKERY_COMPANY_ID,
+  BAKERY_JOB_SLOT_ID,
+  BAKERY_SHIFT_DURATION_TICKS,
+  BAKERY_WAGE_MIN,
+  BAKERY_WAGE_MAX,
+  BAKERY_STARTING_CAPITAL,
+  BAKERY_JOB_CAPACITY,
+  FARM_OWNER_MANAGEMENT_XP,
+  LOGGING_OWNER_MANAGEMENT_XP,
+  MILL_OWNER_MANAGEMENT_XP,
+  BAKERY_OWNER_MANAGEMENT_XP,
+  OWNER_STARTING_RESERVE,
+  PRICE_LEVEL_MIN,
+  PRICE_LEVEL_RANGE,
+  MAX_STARTING_GRAIN,
+  FAILED_BUSINESS_CHANCE,
+  PARISH_ENDOWMENT,
+  FARM_LAND_VALUE,
+  FOREST_LAND_VALUE,
+  MILL_LAND_VALUE,
+  BAKERY_LAND_VALUE,
+  VACANT_PARCELS,
+  rolledPrice,
+  NPC_HOUSEHOLD_COUNT,
+} from './constants';
+import type { Engine } from '../engine';
+export {
+  PLAYER_ID,
+  REST_BUNK_PRICE,
+  FARM_SITE_ID,
+  FARM_COMPANY_ID,
+  FARM_JOB_SLOT_ID,
+  FARM_SHIFT_DURATION_TICKS,
+  LOGGING_SITE_ID,
+  LOGGING_COMPANY_ID,
+  LOGGING_JOB_SLOT_ID,
+  MILL_SITE_ID,
+  MILL_COMPANY_ID,
+  MILL_JOB_SLOT_ID,
+  BAKERY_SITE_ID,
+  BAKERY_COMPANY_ID,
+  BAKERY_JOB_SLOT_ID,
+  NPC_HOUSEHOLD_COUNT,
+  COMPANY_OWNER_HOUSEHOLD_COUNT,
+} from './constants';
+export { registerGameActions, playerRoutine } from '../actions/gameActions';
 
 // §9.2: creates a single-person household for a company's owner-operator —
 // reuses the household machinery wholesale (needs, feeding, the adaptation
 // ladder) rather than inventing a needs-free "abstract owner" concept, and
 // keeps them off the player's expensive per-tick needs path the same way
-// every other NPC is (household membership is Engine's own exclusion
-// signal — see population/cadence.ts's header comment). Returns the new
+// every other NPC is (explicit background simulation mode). Returns the new
 // owner's entity id.
 function seedCompanyOwner(
   engine: Engine,
@@ -517,8 +110,7 @@ function seedCompanyOwner(
   return entityId;
 }
 
-export function seedDemoWorld(engine: Engine): void {
-  registerDemoActionTypes(engine);
+export function createWorld(engine: Engine, config: { startSeasonIndex?: number } = {}): void {
   if (engine.getSite('well')) return; // world content already seeded (e.g. a reloaded save)
 
   // §5.4: rolled once, in a fixed order regardless of outcome, so the RNG
@@ -526,7 +118,8 @@ export function seedDemoWorld(engine: Engine): void {
   // result (same "same DB + same seed = same result" discipline as the
   // rest of this codebase — see rng.ts). Must happen before anything reads
   // engine.calendar (setStartSeasonIndex's own header comment explains why).
-  engine.setStartSeasonIndex(Math.floor(engine.nextRandom() * 4));
+  const rolledSeason = Math.floor(engine.nextRandom() * 4);
+  engine.setStartSeasonIndex(config.startSeasonIndex ?? rolledSeason);
   const priceLevel = PRICE_LEVEL_MIN + engine.nextRandom() * PRICE_LEVEL_RANGE;
   const harvestQuality = engine.nextRandom();
   const failedBusinessRoll = engine.nextRandom();
@@ -541,12 +134,6 @@ export function seedDemoWorld(engine: Engine): void {
   const startingCapital = (companyId: string, amount: number, note: string) => {
     if (companyId !== failedCompanyId) engine.faucetCoin(companyId, amount, note);
   };
-
-  engine.createEntity(PLAYER_ID, 'You');
-  engine.ensureWallet(PLAYER_ID);
-  engine.faucetCoin(PLAYER_ID, 100, 'Started with 100 coin scraped together before leaving home.');
-  engine.ensureNeeds(PLAYER_ID);
-  engine.ensureSkill(PLAYER_ID, LABOR_SKILL);
 
   engine.createSite({ id: 'well', name: 'The Village Well', kind: 'well', x: 0, y: 0 });
   engine.createSite({ id: 'tavern', name: 'The Sleeping Ox', kind: 'tavern', x: 2, y: 1 });
@@ -573,31 +160,6 @@ export function seedDemoWorld(engine: Engine): void {
   // endowment and is topped up by tithes (population/cadence.ts).
   ensureParish(engine.db);
   engine.faucetCoin(PARISH_ID, PARISH_ENDOWMENT, 'The parish poor-box, as you find it.', 'business');
-
-  engine.produceItem({
-    id: 'player-starting-shoes',
-    type: 'shoes',
-    containerId: PLAYER_ID,
-    durability: 200,
-    note: 'The shoes you left home in.',
-  });
-  engine.equipItem(PLAYER_ID, 'player-starting-shoes');
-
-  // A rolled winter start (§5.4) used to be unwinnable for a new player:
-  // an uncloaked 6-hour shift burns 75 warmth, a 3-coin bunk restores 30,
-  // the wage is a few coin and a cloak costs ~30 against 20 starting coin
-  // (STAGE5_AUDIT.md). Nobody sets out in midwinter without one — a winter
-  // start begins wearing an old, half-worn cloak.
-  if (engine.calendar.season === 'winter') {
-    engine.produceItem({
-      id: 'player-starting-cloak',
-      type: 'cloak',
-      containerId: PLAYER_ID,
-      durability: Math.floor((getGoodDefinition('cloak').maxDurability ?? 300) / 2),
-      note: 'An old cloak, patched at the elbows — nobody sets out in midwinter without one.',
-    });
-    engine.equipItem(PLAYER_ID, 'player-starting-cloak');
-  }
 
   // Bread stock is a bridging safety buffer, not the settlement's whole
   // supply anymore — §Stage 5's bakery (below) is meant to take over real
@@ -881,4 +443,43 @@ export function seedDemoWorld(engine: Engine): void {
     homeSiteId: 'tavern', // no dedicated housing sites yet (§12 Housing is a later module) — the tavern stands in as "town center"
     jobSlotIdsToFill: candidateJobSlotIds,
   });
+}
+
+// Legacy headless/scenario fixture. Production new games use the typed player creation boundary.
+export const registerDemoActionTypes = registerGameActions;
+
+export function seedDemoWorld(engine: Engine): void {
+  registerGameActions(engine);
+  if (engine.getSite('well')) return;
+  createWorld(engine);
+  engine.createEntity(PLAYER_ID, 'You');
+  engine.ensureWallet(PLAYER_ID);
+  engine.faucetCoin(PLAYER_ID, 100, 'Started with 100 coin scraped together before leaving home.');
+  engine.ensureNeeds(PLAYER_ID);
+  engine.ensureSkill(PLAYER_ID, LABOR_SKILL);
+
+  engine.produceItem({
+    id: 'player-starting-shoes',
+    type: 'shoes',
+    containerId: PLAYER_ID,
+    durability: 200,
+    note: 'The shoes you left home in.',
+  });
+  engine.equipItem(PLAYER_ID, 'player-starting-shoes');
+
+  // A rolled winter start (§5.4) used to be unwinnable for a new player:
+  // an uncloaked 6-hour shift burns 75 warmth, a 3-coin bunk restores 30,
+  // the wage is a few coin and a cloak costs ~30 against 20 starting coin
+  // (STAGE5_AUDIT.md). Nobody sets out in midwinter without one — a winter
+  // start begins wearing an old, half-worn cloak.
+  if (engine.calendar.season === 'winter') {
+    engine.produceItem({
+      id: 'player-starting-cloak',
+      type: 'cloak',
+      containerId: PLAYER_ID,
+      durability: Math.floor((getGoodDefinition('cloak').maxDurability ?? 300) / 2),
+      note: 'An old cloak, patched at the elbows — nobody sets out in midwinter without one.',
+    });
+    engine.equipItem(PLAYER_ID, 'player-starting-cloak');
+  }
 }

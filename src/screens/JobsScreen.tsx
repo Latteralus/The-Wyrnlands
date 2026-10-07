@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { SceneHeader } from '../components/SceneHeader';
 import { MINUTES_PER_DAY } from '../engine/ui-api';
 import type { UiApi } from '../engine/ui-api';
@@ -19,10 +20,16 @@ export function JobsScreen({ uiApi, playerId, onBack, onAction }: JobsScreenProp
   const calendar = uiApi.getCalendar();
   const openings = uiApi.listJobOpenings();
   const employment = uiApi.getEmployment(playerId);
+  const [notice, setNotice] = useState('');
 
   const apply = (jobSlotId: string, haggle: boolean) => {
-    uiApi.applyForJob(playerId, jobSlotId, haggle);
-    onAction();
+    try {
+      const result = uiApi.applyForJob(playerId, jobSlotId, haggle);
+      setNotice(result.message);
+      onAction();
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : 'This job is no longer available.');
+    }
   };
 
   const quit = () => {
@@ -39,10 +46,12 @@ export function JobsScreen({ uiApi, playerId, onBack, onAction }: JobsScreenProp
       </button>
 
       <div className="jobs-list">
+        {notice && <p role="alert">{notice}</p>}
         {openings.map((job) => {
           const isCurrentJob = employment?.jobSlotId === job.id;
           const blockedByOtherJob = employment !== null && !isCurrentJob;
           const hours = Math.round(job.shiftDurationTicks / TICKS_PER_HOUR);
+          const vacancies = Math.max(0, job.capacity - uiApi.countActiveEmploymentsForSlot(job.id));
           return (
             <div key={job.id} className="job-card">
               <h4>
@@ -52,6 +61,9 @@ export function JobsScreen({ uiApi, playerId, onBack, onAction }: JobsScreenProp
                 Wage: {job.wageMin}–{job.wageMax} coin per {hours}-hour shift
               </p>
               <p>Skill asked: {job.skill}</p>
+              <p>
+                {vacancies} open position{vacancies === 1 ? '' : 's'}
+              </p>
               {job.toolGoodType && <p>Tools provided: company {job.toolGoodType}</p>}
 
               {isCurrentJob && employment && (
@@ -61,10 +73,10 @@ export function JobsScreen({ uiApi, playerId, onBack, onAction }: JobsScreenProp
 
               {!employment && (
                 <div className="job-actions">
-                  <button type="button" onClick={() => apply(job.id, false)}>
+                  <button type="button" disabled={vacancies === 0} onClick={() => apply(job.id, false)}>
                     Accept posted wage ({job.wageMin} coin)
                   </button>
-                  <button type="button" onClick={() => apply(job.id, true)}>
+                  <button type="button" disabled={vacancies === 0} onClick={() => apply(job.id, true)}>
                     Haggle for a better wage
                   </button>
                 </div>

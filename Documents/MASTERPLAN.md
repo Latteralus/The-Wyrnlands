@@ -307,11 +307,11 @@ Illustrated location panels (season/time-tinted), persistent NPC portraits, a co
 - **Company screens (player-owned):** tabbed — **Overview/Ledger · Supplies · Stock · Employees · Tools & Equipment · Contracts · Upgrades**. Policies (target stock, price limits, wages, hiring rules), staff roster with skills/tenure, production queue, upgrade tier and next-tier cost.
 - **NPC business view:** the observable subset (prices, staffing, visible stock, reputation later).
 - **Household screen:** members, budget, reserves, obligations.
-- **Character sheet:** skills, inventory (weight-limited), **worn gear (shoes/clothing condition and warmth)**, shelter status.
+- **Character sheet (implemented 2026-10-06):** exact Overview, Skills including level zero, Inventory/weight/condition, Equipment with equip/unequip, and History. A named player belongs to a household while retaining foreground simulation. Home shows current lodging/stores/reserves/members and configurable autonomous routine preferences. Actual room/cottage rental remains future housing work.
 - **NPC profile:** §11.2.
 - **Region screen / optional map:** grid-derived distances, last-known info, travel initiation.
 - **Trade school screen:** courses, tuition, duration, prerequisites.
-- **Save/Load.**
+- **Title / New Game / Save/Load (implemented 2026-10-06):** Standard/Custom named character creation, seed/season options, IndexedDB autosave and manual slots, newest-valid Continue, raw `.sqlite` export/import, schema migration and format compatibility validation. No world is created until New Game or a save is selected.
 
 ### 14.3 The Log System (core feature)
 
@@ -353,7 +353,7 @@ Full v1 chains; NPC business ledgers with **Management-weighted decisions**; **c
 
 ### Stage 6 — Player Enterprise
 Buy/rent plots; construction (real materials, builder labor, timed oversight); found a company; hire with haggling and labor inertia; **full tabbed company screens (§14.2)**; equipment purchasing; upgrade tiers; contracts as buyer; housing ladder to ownership.
-*(Built ahead of this stage, 2026-10-06: NPCs already found companies through the same engine primitives the player will use here — land tenure (`world/tenure.ts`: lease or freehold, one holder per parcel), transactional founding (`companies/founding.ts`), and the business-type catalog. Stage 6 adds the player's side: the screens, the choice, and construction.)*
+*(Built ahead of this stage, 2026-10-06: NPCs already found companies through the same engine primitives the player will use here — land tenure (`world/tenure.ts`: lease or freehold, one holder per parcel), transactional founding (`companies/founding.ts`), and the business-type catalog. PlayerPlan implementation on 2026-10-06 now exposes the same founding transaction through a playable business flow: matching vacant parcel, lease/freehold, paid land/tools/inputs, investment, staff count, and owner-operation. Player-managed companies retain routine operations without NPC staffing/upgrade/draw/savings decisions. Full tabbed management policies, owner draws, contracts, and construction still belong to Stage 6.)*
 **Exit:** pauper → solvent small business achievable in **~3 in-game years** of efficient play (harsh-pace table §13.1 holds); NPC competitors respond in prices, wages, and equipment.
 
 ### Stage 7 — Region, Transport & the Trade School

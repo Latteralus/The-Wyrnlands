@@ -1,4 +1,5 @@
 import { queryRow, queryRows } from '../db/sqlite';
+import { setSimulationMode, type SimulationMode } from '../entities';
 import type { Database } from 'sql.js';
 
 // §10 Households. A household is also an entities row — same "reuse the
@@ -76,8 +77,14 @@ export function departHousehold(db: Database, householdId: string, tick: number)
   db.run('UPDATE households SET departed_at_tick = ? WHERE id = ?', [tick, householdId]);
 }
 
-export function addHouseholdMember(db: Database, householdId: string, entityId: string): void {
+export function addHouseholdMember(
+  db: Database,
+  householdId: string,
+  entityId: string,
+  mode: SimulationMode = 'background',
+): void {
   db.run('INSERT INTO household_members (entity_id, household_id) VALUES (?, ?)', [entityId, householdId]);
+  setSimulationMode(db, entityId, mode);
 }
 
 export function getHouseholdIdForMember(db: Database, entityId: string): string | null {
@@ -95,11 +102,8 @@ export function listHouseholdMembers(db: Database, householdId: string): string[
   ]).map((row) => String(row[0]));
 }
 
-// Every NPC belongs to exactly one household (§Stage 4's population-
-// generation invariant). This is the signal Engine uses to split "player" /
-// other foreground actors (full per-tick simulation) from "NPC" (background-
-// aggregated, daily/weekly cadence — see population/cadence.ts's header
-// comment for why that split is load-bearing, not cosmetic).
+// Background presence follows the NPC schedule. Household membership and
+// simulation mode are separate: a foreground player can have a home here too.
 //
 // Excludes members of a departed household (§11.4 Migration) — presence.ts's
 // listPresentEntities is the only caller, and an emigrated household has no
@@ -113,6 +117,7 @@ export function listAllHouseholdMemberIds(db: Database): string[] {
     db,
     `SELECT household_members.entity_id FROM household_members
      JOIN households ON households.id = household_members.household_id
-     WHERE households.departed_at_tick IS NULL`,
+     JOIN entities ON entities.id = household_members.entity_id
+     WHERE households.departed_at_tick IS NULL AND entities.simulation_mode = 'background'`,
   ).map((row) => String(row[0]));
 }

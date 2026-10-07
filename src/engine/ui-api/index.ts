@@ -1,9 +1,11 @@
 import type { QueuedAction } from '../actions/types';
 import type { Company, LedgerSummary } from '../companies/companies';
+import type { FoundingPlan, FoundingResult, StartupOutlay } from '../companies/founding';
 import type { Engine } from '../engine';
 import type { Entity } from '../entities';
 import type { EngineEvent, EventScope } from '../eventBus';
 import type { WornGear } from '../gear/gear';
+import type { GearSlot } from '../goods/catalog';
 import type { ApplyResult, Employment, JobSlot } from '../jobs/jobs';
 import type { MarketActivity, MarketActivityFilter, MarketActivityKind } from '../market/activity';
 import type {
@@ -17,6 +19,8 @@ import type {
 import type { MarketListing } from '../market/market';
 import type { MarketTradeRequest, MarketTradeKind } from '../market/playerTrade';
 import type { Needs } from '../needs/needs';
+import type { RoutinePreferences } from '../player/preferences';
+import type { PlayerProfile, PlayerHome } from '../player/profile';
 import type { Household } from '../population/households';
 import type { PresentEntity } from '../population/presence';
 import type {
@@ -34,6 +38,7 @@ import type {
 import type { SkillRecord } from '../skills/skills';
 import type { Calendar } from '../time/clock';
 import type { Site } from '../world/sites';
+import type { TenureKind } from '../world/tenure';
 
 export type {
   MarketActivity,
@@ -83,7 +88,36 @@ export { actionLabel } from '../market/playerTrade';
  * reaching into Engine/db directly, so the engine stays swappable/testable
  * and React state always derives from engine queries (MASTERPLAN.md §4.2).
  */
+export type { NewGameConfig, StartingItem } from '../player/newGame';
+export type {
+  RoutinePreferences,
+  PlayerProfile,
+  PlayerHome,
+  FoundingResult,
+  StartupOutlay,
+  GearSlot,
+  TenureKind,
+};
+export { IMPLEMENTED_SKILLS } from '../skills/skills';
+export { listGoodDefinitions } from '../goods/catalog';
+
 export interface UiApi {
+  getPlayerEntityId(): string;
+  isPlayerControlled(entityId: string): boolean;
+  getPlayerProfile(): PlayerProfile;
+  getPlayerHome(): PlayerHome;
+  getPlayerRoutinePreferences(): RoutinePreferences;
+  setPlayerRoutinePreferences(prefs: RoutinePreferences): void;
+  equipPlayerItem(itemId: string): void;
+  unequipPlayerSlot(slot: GearSlot): void;
+  listBusinessTypes(): ReturnType<Engine['listBusinessTypes']>;
+  estimatePlayerBusinessStartup(
+    typeId: string,
+    siteId: string,
+    tenure: TenureKind,
+    inputs: number,
+  ): StartupOutlay | null;
+  foundPlayerCompany(plan: Omit<FoundingPlan, 'founderId' | 'payerId'>): FoundingResult;
   getTick(): number;
   getCalendar(): Calendar;
   advanceTicks(count: number): void;
@@ -149,6 +183,18 @@ export interface SiteHolder {
 
 export function createUiApi(engine: Engine): UiApi {
   return {
+    getPlayerEntityId: () => engine.getPlayerEntityId(),
+    isPlayerControlled: (id) => engine.isPlayerControlled(id),
+    getPlayerProfile: () => engine.getPlayerProfile(),
+    getPlayerHome: () => engine.getPlayerHome(),
+    getPlayerRoutinePreferences: () => engine.getRoutinePreferences(),
+    setPlayerRoutinePreferences: (prefs) => engine.setPlayerRoutinePreferences(prefs),
+    equipPlayerItem: (id) => engine.equipPlayerItem(id),
+    unequipPlayerSlot: (slot) => engine.unequipPlayerSlot(slot),
+    listBusinessTypes: () => engine.listBusinessTypes(),
+    estimatePlayerBusinessStartup: (typeId, siteId, tenure, inputs) =>
+      engine.estimatePlayerBusinessStartup(typeId, siteId, tenure, inputs),
+    foundPlayerCompany: (plan) => engine.foundPlayerCompany(plan),
     getTick: () => engine.tick,
     getCalendar: () => engine.calendar,
     advanceTicks: (count) => engine.advanceTicks(count),

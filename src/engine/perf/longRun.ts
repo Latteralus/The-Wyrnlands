@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
+import { registerGameActions } from '../actions/gameActions';
 import { createDatabase, queryRow, queryRows } from '../db/sqlite';
 import { loadFreshSqlJs, loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
 import { getGoodDefinition } from '../goods/catalog';
+import { createNewGame } from '../player/newGame';
 import {
   collectEconomySnapshot,
   economySnapshotsToCsv,
@@ -34,6 +36,7 @@ import type { PhaseStat } from './phaseTimer';
 //   --sample S        sample interval in days (default 15)
 //   --checkpoint C    checkpoint interval in days, 0 = never (default 15)
 //   --seed X          world seed (default 'perf-baseline')
+//   --named-player    create the typed named-player household instead of the legacy fixture
 //   --no-player       run the world only, no scripted player
 //   --no-profile      skip SQL/phase profiling (pure wall-clock)
 //   --top K           SQL statements to report per sample (default 8)
@@ -54,6 +57,7 @@ interface Options {
   checkpointDays: number;
   seed: string;
   player: boolean;
+  namedPlayer: boolean;
   profile: boolean;
   top: number;
   out: string | null;
@@ -67,6 +71,7 @@ function parseArgs(argv: string[]): Options {
     checkpointDays: 15,
     seed: 'perf-baseline',
     player: true,
+    namedPlayer: false,
     profile: true,
     top: 8,
     out: null,
@@ -91,6 +96,9 @@ function parseArgs(argv: string[]): Options {
         break;
       case '--seed':
         opts.seed = next();
+        break;
+      case '--named-player':
+        opts.namedPlayer = true;
         break;
       case '--no-player':
         opts.player = false;
@@ -188,8 +196,13 @@ async function main(): Promise<void> {
   );
 
   const SQL = await loadSqlJs();
-  let engine = Engine.bootstrap(createDatabase(SQL), { seed: opts.seed });
-  seedDemoWorld(engine);
+  let engine = opts.namedPlayer
+    ? createNewGame(createDatabase(SQL), {
+        world: { seed: opts.seed },
+        character: { firstName: 'Edda', lastName: 'Hale', preset: 'standard' },
+      })
+    : Engine.bootstrap(createDatabase(SQL), { seed: opts.seed });
+  if (!opts.namedPlayer) seedDemoWorld(engine);
 
   const phaseTimer = new PhaseTimer();
   const profiling: { sql: SqlProfiler | null } = { sql: null };
@@ -205,7 +218,9 @@ async function main(): Promise<void> {
   const runStart = performance.now();
   let lastCheckpointDay = 0;
 
-  for (let day = opts.sampleDays; day <= opts.days; day += opts.sampleDays) {
+  for (let sampleIndex = 1; sampleIndex <= Math.ceil(opts.days / opts.sampleDays); sampleIndex++) {
+    const day = Math.min(sampleIndex * opts.sampleDays, opts.days);
+    const intervalDays = day - (samples.at(-1)?.day ?? 0);
     const intervalStart = performance.now();
     runScriptedPlayerUntil(engine, day * MINUTES_PER_DAY, { player: opts.player });
     const intervalMs = performance.now() - intervalStart;
@@ -227,7 +242,7 @@ async function main(): Promise<void> {
       const econ = collectEconomySnapshot(
         engine.db,
         engine.tick,
-        opts.sampleDays * MINUTES_PER_DAY,
+        intervalDays * MINUTES_PER_DAY,
         MINUTES_PER_DAY,
       );
       econSnapshots.push(econ);
@@ -252,7 +267,7 @@ async function main(): Promise<void> {
       const reloadStart = performance.now();
       engine.dispose();
       engine = Engine.bootstrap(createDatabase(await loadFreshSqlJs(), exported), { seed: opts.seed });
-      seedDemoWorld(engine); // re-registers action types — see checkpoint.ts
+      registerGameActions(engine); // registration only; checkpoints never seed world content
       const reloadMs = performance.now() - reloadStart;
       instrument(engine);
       checkpoint = {
@@ -267,7 +282,7 @@ async function main(): Promise<void> {
       day,
       intervalMs: Math.round(intervalMs),
       cumulativeMs: Math.round(performance.now() - runStart),
-      msPerSimDay: Math.round(intervalMs / opts.sampleDays),
+      msPerSimDay: Math.round(intervalMs / intervalDays),
       rows,
       activeItems,
       dbBytes: bytes,

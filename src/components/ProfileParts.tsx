@@ -27,11 +27,19 @@ export function InspectToggle({ inspect, onToggle }: { inspect: boolean; onToggl
   );
 }
 
-export function InspectPanel({ title, children }: { title: string; children: ReactNode }) {
+export function InspectPanel({
+  title,
+  children,
+  privateKnowledge = true,
+}: {
+  title: string;
+  children: ReactNode;
+  privateKnowledge?: boolean;
+}) {
   return (
     <section className="inspect-panel">
       <h3>
-        {title} <span className="inspect-panel-note">— not public knowledge</span>
+        {title} {privateKnowledge && <span className="inspect-panel-note">— not public knowledge</span>}
       </h3>
       {children}
     </section>

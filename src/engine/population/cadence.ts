@@ -1,7 +1,7 @@
 import { getCompany, recordLedgerEntry } from '../companies/companies';
 import { wearCompanyTool } from '../companies/tools';
 import { queryRow, queryRows } from '../db/sqlite';
-import { createEntity, getEntityName } from '../entities';
+import { isBackgroundActor, createEntity, getEntityName } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import {
   countActiveItemsOfType,
@@ -43,18 +43,13 @@ import { provisionHousehold } from './provisions';
 import type { EventBus } from '../eventBus';
 import type { Database } from 'sql.js';
 
-// §Stage 4's "regional LOD" (MASTERPLAN.md §18 risk table: "background
-// aggregation"). Confirmed empirically before any of this was built: ~40
-// entities each taking the player's per-tick, per-entity needs path
-// (individual SELECT/SELECT/UPDATE every tick — needs.ts's tickNeeds)
-// exhausts sql.js's WASM heap in under 3,000 ticks, nowhere near a 90-day
-// (129,600-tick) run. NPCs therefore never run tickNeeds or the action-queue
-// system at all — they're "background actors": their needs, wages, skill
-// gain, and consumption are all resolved in coarse daily/weekly passes
-// (§4.2's own cadence table already has these tiers), a handful of DB calls
-// per household/employment rather than per entity per tick. The player (and
-// any other entity that isn't a household member) is unaffected — see
-// Engine.applyNeedsCadence's household-membership exclusion.
+// Background aggregation (§4.2): NPC needs, wages, skill gain, and consumption
+// resolve in daily/weekly passes rather than through per-tick action queues.
+// This keeps the cost proportional to households/employments per day.
+// Explicit simulation_mode selects the cadence independently of household
+// membership: the named player can live in a household and remain foreground.
+// The historical WASM-stack failure is fixed (PERFORMANCE_AUDIT.md); coarse
+// NPC simulation remains the intended scale/performance architecture.
 //
 // Routine NPC transactions (buying bread, paying wages) go through the same
 // produceItem/destroyItem/faucetCoin/etc. functions as the player's — that's
@@ -304,7 +299,7 @@ export function applyHouseholdDailyCadence(
 ): void {
   for (const household of listHouseholds(db)) {
     if (household.departedAtTick !== null) continue; // §11.4 — gone, nothing left to simulate
-    const members = listHouseholdMembers(db, household.id);
+    const members = listHouseholdMembers(db, household.id).filter((id) => isBackgroundActor(db, id));
     if (members.length === 0) continue;
 
     poolMemberCoin(db, bus, household, members, tick);
@@ -393,8 +388,8 @@ export function isWorkday(tick: number): boolean {
 //   - a skill roll decides the shift's yield (§13.2), and production runs
 //     through production/shift.ts exactly as the player's does;
 //   - the tool wears (TOOL_WEAR_PER_SHIFT) and the worker gains SHIFT_XP.
-// Household membership is the NPC signal, exactly as
-// Engine.applyNeedsCadence uses it; the player works real shifts instead.
+// Background simulation mode selects this NPC path; foreground household
+// members work real timed shifts instead.
 //
 // History: this was a weekly lump (five shifts' wages/output at once) until
 // the 2026-10-06 balancing pass. Daily shifts keep goods flowing through
@@ -414,7 +409,7 @@ export function applyNpcLaborDailyCadence(
   for (const jobSlot of listJobOpenings(db)) {
     for (const employment of listActiveEmploymentsForSlot(db, jobSlot.id)) {
       const householdId = getHouseholdIdForMember(db, employment.entityId);
-      if (!householdId) continue; // the player (or any foreground actor) works real shifts instead
+      if (!householdId || !isBackgroundActor(db, employment.entityId)) continue; // the player (or any foreground actor) works real shifts instead
       const company = getCompany(db, employment.companyId);
       if (!company) continue;
 
@@ -548,7 +543,7 @@ export function applyNpcJobSeekingWeeklyCadence(
     .sort((a, b) => Number(b.strained) - Number(a.strained));
 
   for (const { household, strained } of households) {
-    for (const memberId of listHouseholdMembers(db, household.id)) {
+    for (const memberId of listHouseholdMembers(db, household.id).filter((id) => isBackgroundActor(db, id))) {
       if (remainingCapacity.size === 0) return;
       if (getActiveEmployment(db, memberId)) continue;
 
@@ -758,7 +753,8 @@ export function applyHouseholdMigrationWeeklyCadence(
 ): void {
   for (const household of listHouseholds(db)) {
     if (household.departedAtTick !== null) continue;
-    const members = listHouseholdMembers(db, household.id);
+    const members = listHouseholdMembers(db, household.id).filter((id) => isBackgroundActor(db, id));
+    if (members.length === 0 || members.length !== listHouseholdMembers(db, household.id).length) continue;
     tryEmigrateHousehold(db, bus, household, members, tick);
   }
 
