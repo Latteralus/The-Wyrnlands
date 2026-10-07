@@ -29,6 +29,19 @@ try {
   await page.getByRole('button', { name: 'New Game', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Continue', exact: true }).isEnabled(), false);
   await button('New Game');
+  for (const skill of ['labor', 'farming', 'woodcutting', 'milling', 'baking', 'trading', 'management']) {
+    const select = page.getByLabel(skill, { exact: true });
+    assert.equal(await select.isDisabled(), true);
+    assert.equal(await select.inputValue(), '0');
+    assert.deepEqual(await select.locator('option').allTextContents(), [
+      'Level 0',
+      'Level 1',
+      'Level 2',
+      'Level 3',
+      'Level 4',
+      'Level 5',
+    ]);
+  }
   await page.getByLabel('First name').fill('Chris');
   await page.getByLabel('Last name').fill('Barnett');
   await page.getByLabel('World seed').fill('named-player-regression');
@@ -209,9 +222,24 @@ try {
   await enterprise.getByLabel('World seed').fill('named-player-regression');
   await enterprise.getByLabel('Starting season').selectOption('0');
   await enterprise.getByLabel('Starting coin', { exact: true }).fill('2000');
-  await enterprise.getByLabel('management', { exact: true }).fill('600');
+  await enterprise.getByLabel('management', { exact: true }).selectOption('3');
+  await enterprise.getByLabel('farming', { exact: true }).selectOption('5');
+  // Standard resets displayed levels to zero; switching back retains custom choices.
+  await enterprise.getByLabel('Starting preset').selectOption('standard');
+  assert.equal(await enterprise.getByLabel('farming', { exact: true }).inputValue(), '0');
+  await enterprise.getByLabel('Starting preset').selectOption('custom');
+  assert.equal(await enterprise.getByLabel('farming', { exact: true }).inputValue(), '5');
   await clickEnterprise('Begin your life');
   await enterprise.getByRole('heading', { name: 'Edda Hale', exact: true }).waitFor();
+  await clickEnterprise('Skills');
+  assert.match(
+    await enterprise.locator('.player-table tr').filter({ hasText: 'Farming' }).innerText(),
+    /Farming\s+5\s+1000\s+Mastered/,
+  );
+  assert.match(
+    await enterprise.locator('.player-table tr').filter({ hasText: 'Management' }).innerText(),
+    /Management\s+3\s+600\s+200/,
+  );
   await clickEnterprise('Businesses');
   await enterprise.getByLabel('Company name').fill('Hale Timber');
   await enterprise.getByLabel('Total investment (including startup costs)').fill('500');

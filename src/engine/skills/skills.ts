@@ -26,7 +26,13 @@ export const IMPLEMENTED_SKILLS = [
 // Placeholder curve — revisit with the balance harness (§17) once the harsh-
 // pace table (§13.1) has real playtesting to calibrate against.
 const XP_PER_LEVEL = 200;
-const MAX_LEVEL = 5;
+export const MAX_SKILL_LEVEL = 5;
+
+export function getXpForSkillLevel(level: number): number {
+  if (!Number.isInteger(level) || level < 0 || level > MAX_SKILL_LEVEL)
+    throw new Error(`Skill level must be a whole number between 0 and ${MAX_SKILL_LEVEL}.`);
+  return level * XP_PER_LEVEL;
+}
 
 export function ensureSkill(db: Database, entityId: string, skill: string): void {
   db.run('INSERT OR IGNORE INTO skills (entity_id, skill, xp) VALUES (?, ?, 0)', [entityId, skill]);
@@ -39,7 +45,7 @@ export function getXp(db: Database, entityId: string, skill: string): number {
 
 export function getLevel(db: Database, entityId: string, skill: string): number {
   const xp = getXp(db, entityId, skill);
-  return Math.min(MAX_LEVEL, Math.floor(xp / XP_PER_LEVEL));
+  return Math.min(MAX_SKILL_LEVEL, Math.floor(xp / XP_PER_LEVEL));
 }
 
 // §13.2: "each labor-tick grants XP" — regardless of the attempt's outcome,
@@ -64,12 +70,12 @@ export function listSkills(db: Database, entityId: string): SkillRecord[] {
     entityId,
   ]).map((row) => {
     const xp = Number(row[1]);
-    const level = Math.min(MAX_LEVEL, Math.floor(xp / XP_PER_LEVEL));
+    const level = Math.min(MAX_SKILL_LEVEL, Math.floor(xp / XP_PER_LEVEL));
     return {
       skill: String(row[0]),
       xp,
       level,
-      xpToNextLevel: level >= MAX_LEVEL ? null : (level + 1) * XP_PER_LEVEL - xp,
+      xpToNextLevel: level >= MAX_SKILL_LEVEL ? null : (level + 1) * XP_PER_LEVEL - xp,
     };
   });
 }

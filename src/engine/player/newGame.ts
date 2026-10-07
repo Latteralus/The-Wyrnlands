@@ -5,7 +5,7 @@ import { setSimulationMode } from '../entities';
 import { getGoodDefinition } from '../goods/catalog';
 import { PERSONAL_CARRY_CAPACITY_KG } from '../inventory/capacity';
 import { createWorld } from '../seed/demoWorld';
-import { IMPLEMENTED_SKILLS } from '../skills/skills';
+import { IMPLEMENTED_SKILLS, MAX_SKILL_LEVEL, getXpForSkillLevel } from '../skills/skills';
 import { DEFAULT_ROUTINE, setRoutinePreferences } from './preferences';
 import type { Database } from 'sql.js';
 
@@ -47,9 +47,17 @@ export function validateNewGameConfig(config: NewGameConfig): void {
   const coin = config.character.coin ?? 100;
   if (!Number.isSafeInteger(coin) || coin < 0 || coin > 1_000_000)
     throw new Error('Starting coin must be a whole number between 0 and 1,000,000.');
+  const maxStartingXp = getXpForSkillLevel(MAX_SKILL_LEVEL);
   for (const [skill, xp] of Object.entries(config.character.skillXp ?? {})) {
-    if (!IMPLEMENTED_SKILLS.some((s) => s === skill) || !Number.isSafeInteger(xp) || xp < 0 || xp > 1_000_000)
-      throw new Error('Choose an implemented skill and whole XP between 0 and 1,000,000.');
+    if (
+      !IMPLEMENTED_SKILLS.some((s) => s === skill) ||
+      !Number.isSafeInteger(xp) ||
+      xp < 0 ||
+      xp > maxStartingXp
+    )
+      throw new Error(
+        `Starting skill XP must be a whole number between 0 and ${maxStartingXp} (level ${MAX_SKILL_LEVEL}) for an implemented skill.`,
+      );
   }
   let weight = 0;
   const slots = new Set<string>();

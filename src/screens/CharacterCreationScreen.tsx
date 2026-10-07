@@ -1,5 +1,11 @@
 import { useState } from 'react';
-import { IMPLEMENTED_SKILLS, listGoodDefinitions, type NewGameConfig } from '../engine/ui-api';
+import {
+  IMPLEMENTED_SKILLS,
+  MAX_SKILL_LEVEL,
+  getXpForSkillLevel,
+  listGoodDefinitions,
+  type NewGameConfig,
+} from '../engine/ui-api';
 
 export function CharacterCreationScreen({
   onCreate,
@@ -16,7 +22,7 @@ export function CharacterCreationScreen({
   const [seed, setSeed] = useState(() => `oakford-${crypto.randomUUID().slice(0, 8)}`);
   const [season, setSeason] = useState('rolled');
   const [coin, setCoin] = useState(100);
-  const [xp, setXp] = useState<Record<string, number>>({});
+  const [levels, setLevels] = useState<Record<string, number>>({});
   const [items, setItems] = useState<Record<string, number>>({ shoes: 1 });
   const goods = listGoodDefinitions();
   return (
@@ -39,7 +45,9 @@ export function CharacterCreationScreen({
               ...(preset === 'custom'
                 ? {
                     coin,
-                    skillXp: xp,
+                    skillXp: Object.fromEntries(
+                      IMPLEMENTED_SKILLS.map((skill) => [skill, getXpForSkillLevel(levels[skill] ?? 0)]),
+                    ),
                     items: goods
                       .filter((good) => (items[good.type] ?? 0) > 0)
                       .map((good) => ({
@@ -116,25 +124,6 @@ export function CharacterCreationScreen({
                 onChange={(e) => setCoin(e.target.valueAsNumber)}
               />
             </label>
-            <details open>
-              <summary>Skills — starting XP</summary>
-              <div className="form-grid">
-                {IMPLEMENTED_SKILLS.map((skill) => (
-                  <label key={skill}>
-                    {skill}
-                    <input
-                      type="number"
-                      min={0}
-                      max={1000000}
-                      step={1}
-                      value={xp[skill] ?? 0}
-                      onChange={(e) => setXp({ ...xp, [skill]: e.target.valueAsNumber })}
-                      required
-                    />
-                  </label>
-                ))}
-              </div>
-            </details>
             <details>
               <summary>Belongings — quantities (20 kg maximum)</summary>
               <div className="form-grid">
@@ -159,6 +148,28 @@ export function CharacterCreationScreen({
             </details>
           </>
         )}
+        <details open>
+          <summary>Skills — starting levels (0–{MAX_SKILL_LEVEL})</summary>
+          <div className="form-grid">
+            {IMPLEMENTED_SKILLS.map((skill) => (
+              <label key={skill}>
+                {skill}
+                <select
+                  aria-label={skill}
+                  value={preset === 'standard' ? 0 : (levels[skill] ?? 0)}
+                  disabled={preset === 'standard'}
+                  onChange={(e) => setLevels({ ...levels, [skill]: Number(e.target.value) })}
+                >
+                  {Array.from({ length: MAX_SKILL_LEVEL + 1 }, (_, level) => (
+                    <option key={level} value={level}>
+                      Level {level}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+        </details>
         <div className="panel-actions">
           <button type="button" onClick={onBack} disabled={busy}>
             Back

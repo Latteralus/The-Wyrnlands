@@ -2,9 +2,16 @@ import { describe, expect, it } from 'vitest';
 import { createDatabase } from '../db/sqlite';
 import { loadSqlJs } from '../db/sqlite.node';
 import { Engine } from '../engine';
-import { LABOR_SKILL } from './skills';
+import { LABOR_SKILL, MAX_SKILL_LEVEL, getXpForSkillLevel } from './skills';
 
 describe('skills', () => {
+  it.each([-1, NaN, Infinity, 0.5, MAX_SKILL_LEVEL + 1, 10_000])(
+    'rejects invalid level %j when converting to starting XP',
+    (level) => {
+      expect(() => getXpForSkillLevel(level)).toThrow('Skill level');
+    },
+  );
+
   it('starts at 0 xp/level and grows the level as xp accrues, capped at max level', async () => {
     const SQL = await loadSqlJs();
     const db = createDatabase(SQL);

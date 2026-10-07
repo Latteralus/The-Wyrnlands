@@ -10,7 +10,7 @@ import {
   applyNpcJobSeekingWeeklyCadence,
   applyNpcLaborDailyCadence,
 } from '../population/cadence';
-import { IMPLEMENTED_SKILLS } from '../skills/skills';
+import { IMPLEMENTED_SKILLS, MAX_SKILL_LEVEL, getXpForSkillLevel } from '../skills/skills';
 import { MINUTES_PER_DAY } from '../time/clock';
 import { createUiApi } from '../ui-api';
 import { loadGame } from './loadGame';
@@ -125,6 +125,36 @@ describe('a named player and a real household', () => {
 
   it.each([-1, NaN, Infinity, 0.5, 1000001])('rejects invalid custom coin %j', (coin) => {
     expect(() => validateNewGameConfig(config({ preset: 'custom', coin }))).toThrow('Starting coin');
+  });
+
+  it.each([-1, NaN, Infinity, 0.5, getXpForSkillLevel(MAX_SKILL_LEVEL) + 1, 1_000_000])(
+    'rejects invalid starting skill XP %j before seeding',
+    (xp) => {
+      const db = createDatabase(SQL);
+      expect(() => createNewGame(db, config({ preset: 'custom', skillXp: { farming: xp } }))).toThrow(
+        'Starting skill XP',
+      );
+      expect(queryRows(db, "SELECT name FROM sqlite_master WHERE type = 'table'")).toHaveLength(0);
+      db.close();
+    },
+  );
+
+  it('creates every selectable skill level, including the maximum, at its XP threshold', () => {
+    const e = game({
+      preset: 'custom',
+      skillXp: Object.fromEntries(
+        IMPLEMENTED_SKILLS.map((skill, i) => [skill, getXpForSkillLevel(i % (MAX_SKILL_LEVEL + 1))]),
+      ),
+    });
+    for (const [i, skill] of IMPLEMENTED_SKILLS.entries()) {
+      const level = i % (MAX_SKILL_LEVEL + 1);
+      expect(e.getPlayerProfile().skills.find((s) => s.skill === skill)).toMatchObject({
+        level,
+        xp: getXpForSkillLevel(level),
+        xpToNextLevel: level === MAX_SKILL_LEVEL ? null : getXpForSkillLevel(1),
+      });
+    }
+    e.dispose();
   });
 
   it('rejects fake skills, overweight items, invalid quantities and duplicate worn slots', () => {

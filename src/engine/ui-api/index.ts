@@ -98,7 +98,7 @@ export type {
   GearSlot,
   TenureKind,
 };
-export { IMPLEMENTED_SKILLS } from '../skills/skills';
+export { IMPLEMENTED_SKILLS, MAX_SKILL_LEVEL, getXpForSkillLevel } from '../skills/skills';
 export { listGoodDefinitions } from '../goods/catalog';
 
 export interface UiApi {
